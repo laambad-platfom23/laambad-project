@@ -1,0 +1,855 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String    @id @db.Uuid
+  createdAt           DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt           DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt           DateTime? @map("deleted_at") @db.Timestamptz()
+  name                String    @db.VarChar(255)
+  email               String    @unique @db.VarChar(255)
+  username            String?   @unique @db.VarChar(100)
+  phone               String?   @db.VarChar(30)
+  address             String?   @db.VarChar(500)
+  gender              String?   @db.VarChar(20)
+  avatarUrl           String?   @map("avatar_url") @db.VarChar(1024)
+  isActive            Boolean   @default(true) @map("is_active")
+  password            String    @db.VarChar(255)
+  roleId              String    @map("role_id") @db.Uuid
+  legacyWpId          BigInt?   @unique @map("legacy_wp_id")
+  legacyRegisteredAt  DateTime? @map("legacy_registered_at") @db.Timestamptz()
+  passwordScheme      String    @default("bcrypt") @map("password_scheme") @db.VarChar(32)
+  legacyPasswordHash  String?   @map("legacy_password_hash") @db.VarChar(255)
+  mustResetPassword   Boolean   @default(false) @map("must_reset_password")
+  /// A1 (prisma/app-sql/A1-email-verification.sql): null = e-mail not verified yet
+  emailVerifiedAt     DateTime? @map("email_verified_at") @db.Timestamptz()
+
+  role               Role                 @relation(fields: [roleId], references: [id])
+  legacyRoles        UserLegacyRole[]
+  sessions           Session[]
+  coursesInstructed  Course[]             @relation("CourseInstructor")
+  enrollments        Enrollment[]
+  lessonProgress     LessonProgress[]
+  certificates       Certificate[]
+  payments           Payment[]
+  orders             Order[]
+  earnings           InstructorEarning[]  @relation("EarningInstructor")
+  withdrawals        InstructorWithdrawal[]
+  notifications      Notification[]
+  uploadedFiles      UploadedFile[]
+  courseReviews      CourseReview[]
+  researchPapers     ResearchPaper[]
+  researchReviews    ResearchReview[]
+  lessonQuestions    LessonQuestion[]     @relation("QuestionAuthor")
+  answeredQuestions  LessonQuestion[]     @relation("QuestionAnswerer")
+  quizAttempts       QuizAttempt[]
+  submissions        Submission[]         @relation("StudentSubmission")
+  gradedSubmissions  Submission[]         @relation("GradedBy")
+  auditLogs          AuditLog[]
+  emailCodes         EmailCode[]
+
+  @@index([passwordScheme])
+  @@map("users")
+}
+
+model UserLegacyRole {
+  userId   String @map("user_id") @db.Uuid
+  roleSlug String @map("role_slug") @db.VarChar(64)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@id([userId, roleSlug])
+  @@map("user_legacy_roles")
+}
+
+model Role {
+  id          String    @id @db.Uuid
+  createdAt   DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz()
+  name        String    @db.VarChar(128)
+  slug        String    @unique @db.VarChar(64)
+  description String?   @db.VarChar(512)
+
+  users       User[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String    @id @db.Uuid
+  createdAt   DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz()
+  name        String    @db.VarChar(128)
+  key         String    @unique @db.VarChar(128)
+  description String?   @db.VarChar(512)
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  permissionId String @map("permission_id") @db.Uuid
+  roleId       String @map("role_id") @db.Uuid
+
+  permission Permission @relation(fields: [permissionId], references: [id])
+  role       Role       @relation(fields: [roleId], references: [id])
+
+  @@id([permissionId, roleId])
+  @@map("role_permissions")
+}
+
+model Session {
+  id        String    @id @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  jti       String    @unique @db.Uuid
+  ip        String?   @db.VarChar(255)
+  userAgent String?   @map("user_agent") @db.VarChar(512)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz()
+  createdAt DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt DateTime? @map("updated_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("sessions")
+}
+
+model CourseCategory {
+  id           String    @id @db.Uuid
+  createdAt    DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt    DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz()
+  name         String    @db.VarChar(128)
+  slug         String    @unique @db.VarChar(128)
+  sortOrder    BigInt    @default(0) @map("sort_order")
+  legacyTermId BigInt?   @unique @map("legacy_term_id")
+  parentId     String?   @map("parent_id") @db.Uuid
+
+  parent   CourseCategory?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children CourseCategory[] @relation("CategoryTree")
+  courses  Course[]
+  links    CourseCategoryLink[]
+
+  @@map("course_categories")
+}
+
+model CourseCategoryLink {
+  courseId   String  @map("course_id") @db.Uuid
+  categoryId String  @map("category_id") @db.Uuid
+  isPrimary  Boolean @default(false) @map("is_primary")
+
+  course   Course         @relation(fields: [courseId], references: [id])
+  category CourseCategory @relation(fields: [categoryId], references: [id])
+
+  @@id([courseId, categoryId])
+  @@index([categoryId])
+  @@map("course_category_links")
+}
+
+model Course {
+  id                 String    @id @db.Uuid
+  createdAt          DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt          DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt          DateTime? @map("deleted_at") @db.Timestamptz()
+  title              String    @db.VarChar(255)
+  slug               String    @unique @db.VarChar(220)
+  description        String?   @db.Text
+  excerpt            String?   @db.Text
+  instructorId       String    @map("instructor_id") @db.Uuid
+  categoryId         String?   @map("category_id") @db.Uuid
+  status             String    @default("draft") @db.VarChar(24)
+  legacyWpId         BigInt?   @unique @map("legacy_wp_id")
+  legacyProductId    BigInt?   @map("legacy_product_id")
+  legacyThumbnailId  BigInt?   @map("legacy_thumbnail_id")
+  priceType          String?   @map("price_type") @db.VarChar(16)
+  level              String?   @db.VarChar(32)
+  isPublic           Boolean   @default(false) @map("is_public")
+  benefits           String?   @db.Text
+  requirements       String?   @db.Text
+  targetAudience     String?   @map("target_audience") @db.Text
+  materials          String?   @db.Text
+
+  instructor   User                 @relation("CourseInstructor", fields: [instructorId], references: [id])
+  category     CourseCategory?      @relation(fields: [categoryId], references: [id])
+  categoryLinks CourseCategoryLink[]
+  sections     Section[]
+  pricing      CoursePricing[]
+  enrollments  Enrollment[]
+  assignments  Assignment[]
+  reviews      CourseReview[]
+  quizzes      Quiz[]
+  certificates Certificate[]
+  payments     Payment[]
+  orderItems   OrderItem[]
+  earnings     InstructorEarning[]
+  questions    LessonQuestion[]
+
+  @@index([instructorId, status])
+  @@index([legacyProductId])
+  @@map("courses")
+}
+
+model CoursePricing {
+  id            String    @id @db.Uuid
+  createdAt     DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt     DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz()
+  courseId      String    @map("course_id") @db.Uuid
+  price         Decimal   @default(0) @db.Decimal(16, 2)
+  currency      String    @default("USD") @db.VarChar(8)
+  isFree        Boolean   @default(false) @map("is_free")
+  discountPrice Decimal?  @map("discount_price") @db.Decimal(16, 2)
+  startDate     DateTime? @map("start_date") @db.Timestamptz()
+  endDate       DateTime? @map("end_date") @db.Timestamptz()
+  isActive      Boolean   @default(false) @map("is_active")
+
+  course Course @relation(fields: [courseId], references: [id])
+
+  @@index([courseId, isActive])
+  @@map("course_pricing")
+}
+
+model Section {
+  id         String    @id @db.Uuid
+  createdAt  DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt  DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz()
+  courseId   String    @map("course_id") @db.Uuid
+  title      String    @db.VarChar(255)
+  sortOrder  BigInt    @default(0) @map("sort_order")
+  legacyWpId BigInt?   @unique @map("legacy_wp_id")
+
+  course  Course   @relation(fields: [courseId], references: [id])
+  lessons Lesson[]
+  quizzes Quiz[]
+
+  @@index([courseId, sortOrder])
+  @@map("sections")
+}
+
+model Lesson {
+  id                String    @id @db.Uuid
+  createdAt         DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt         DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz()
+  sectionId         String    @map("section_id") @db.Uuid
+  title             String    @db.VarChar(255)
+  description       String?   @db.Text
+  content           String?   @db.Text
+  videoProvider     String?   @map("video_provider") @db.VarChar(32)
+  videoUrl          String?   @map("video_url") @db.VarChar(2048)
+  vdocipherVideoId  String?   @map("vdocipher_video_id") @db.VarChar(64)
+  videoParseStatus  String    @default("none") @map("video_parse_status") @db.VarChar(24)
+  durationSeconds   Int?      @map("duration_seconds")
+  isPreview         Boolean   @default(false) @map("is_preview")
+  attachmentsJson   String?   @map("attachments_json") @db.Text
+  sortOrder         BigInt    @default(0) @map("sort_order")
+  legacyWpId        BigInt?   @unique @map("legacy_wp_id")
+
+  section   Section          @relation(fields: [sectionId], references: [id])
+  progress  LessonProgress[]
+  questions LessonQuestion[]
+
+  @@index([sectionId, sortOrder])
+  @@index([vdocipherVideoId])
+  @@map("lessons")
+}
+
+model Enrollment {
+  id              String    @id @db.Uuid
+  createdAt       DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz()
+  userId          String    @map("user_id") @db.Uuid
+  courseId        String    @map("course_id") @db.Uuid
+  orderId         String?   @map("order_id") @db.Uuid
+  status          String    @default("active") @db.VarChar(32)
+  sourceStatus    String?   @map("source_status") @db.VarChar(32)
+  paymentStatus   String    @default("pending") @map("payment_status") @db.VarChar(32)
+  enrolledAt      DateTime  @map("enrolled_at") @db.Timestamptz()
+  completedAt     DateTime? @map("completed_at") @db.Timestamptz()
+  legacyWpId      BigInt?   @unique @map("legacy_wp_id")
+  legacyOrderId   BigInt?   @map("legacy_order_id")
+  legacyProductId BigInt?   @map("legacy_product_id")
+
+  user     User             @relation(fields: [userId], references: [id])
+  course   Course           @relation(fields: [courseId], references: [id])
+  order    Order?           @relation(fields: [orderId], references: [id])
+  progress LessonProgress[]
+
+  @@index([userId, courseId])
+  @@index([legacyOrderId])
+  @@index([courseId, status])
+  @@map("enrollments")
+}
+
+model LessonProgress {
+  id               String    @id @db.Uuid
+  createdAt        DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt        DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz()
+  userId           String    @map("user_id") @db.Uuid
+  enrollmentId     String?   @map("enrollment_id") @db.Uuid
+  lessonId         String    @map("lesson_id") @db.Uuid
+  completed        Boolean   @default(false)
+  completedPercent BigInt    @default(0) @map("completed_percent")
+  completedAt      DateTime? @map("completed_at") @db.Timestamptz()
+  legacyUmetaId    BigInt?   @unique @map("legacy_umeta_id")
+
+  user       User        @relation(fields: [userId], references: [id])
+  enrollment Enrollment? @relation(fields: [enrollmentId], references: [id])
+  lesson     Lesson      @relation(fields: [lessonId], references: [id])
+
+  @@unique([userId, lessonId])
+  @@index([enrollmentId])
+  @@map("lesson_progresses")
+}
+
+model LessonQuestion {
+  id              String    @id @db.Uuid
+  createdAt       DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz()
+  lessonId        String?   @map("lesson_id") @db.Uuid
+  courseId        String?   @map("course_id") @db.Uuid
+  authorId        String    @map("author_id") @db.Uuid
+  body            String    @db.Text
+  answerBody      String?   @map("answer_body") @db.Text
+  answererId      String?   @map("answerer_id") @db.Uuid
+  answeredAt      DateTime? @map("answered_at") @db.Timestamptz()
+  legacyCommentId BigInt?   @unique @map("legacy_comment_id")
+
+  lesson   Lesson? @relation(fields: [lessonId], references: [id])
+  course   Course? @relation(fields: [courseId], references: [id])
+  author   User    @relation("QuestionAuthor", fields: [authorId], references: [id])
+  answerer User?   @relation("QuestionAnswerer", fields: [answererId], references: [id])
+
+  @@index([courseId])
+  @@map("lesson_questions")
+}
+
+model Assignment {
+  id          String    @id @db.Uuid
+  createdAt   DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz()
+  courseId    String    @map("course_id") @db.Uuid
+  title       String    @db.VarChar(255)
+  description String?   @db.Text
+  dueAt       DateTime? @map("due_at") @db.Timestamptz()
+  maxPoints   Decimal   @default(100) @map("max_points") @db.Decimal(16, 2)
+  passPoints  Decimal?  @map("pass_points") @db.Decimal(16, 2)
+  attachmentsJson String? @map("attachments_json") @db.Text
+  published   Boolean   @default(false)
+  legacyWpId  BigInt?   @unique @map("legacy_wp_id")
+
+  course      Course       @relation(fields: [courseId], references: [id])
+  submissions Submission[]
+
+  @@map("assignments")
+}
+
+model Submission {
+  id              String    @id @db.Uuid
+  createdAt       DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz()
+  assignmentId    String    @map("assignment_id") @db.Uuid
+  studentId       String    @map("student_id") @db.Uuid
+  body            String?   @db.Text
+  fileUrl         String?   @map("file_url") @db.VarChar(2048)
+  attachmentsJson String?   @map("attachments_json") @db.Text
+  submittedAt     DateTime  @map("submitted_at") @db.Timestamptz()
+  grade           Decimal?  @db.Decimal(16, 2)
+  feedback        String?   @db.Text
+  gradedAt        DateTime? @map("graded_at") @db.Timestamptz()
+  gradedById      String?   @map("graded_by_id") @db.Uuid
+  legacyCommentId BigInt?   @unique @map("legacy_comment_id")
+
+  assignment Assignment @relation(fields: [assignmentId], references: [id])
+  student    User       @relation("StudentSubmission", fields: [studentId], references: [id])
+  gradedBy   User?      @relation("GradedBy", fields: [gradedById], references: [id])
+
+  @@index([assignmentId, studentId])
+  @@map("submissions")
+}
+
+model Certificate {
+  id             String    @id @db.Uuid
+  createdAt      DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt      DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz()
+  userId         String    @map("user_id") @db.Uuid
+  courseId       String    @map("course_id") @db.Uuid
+  verificationId String    @unique @map("verification_id") @db.VarChar(64)
+  issuedAt       DateTime  @map("issued_at") @db.Timestamptz()
+  pdfUrl         String?   @map("pdf_url") @db.VarChar(2048)
+  legacyCommentId BigInt?  @unique @map("legacy_comment_id")
+
+  user   User   @relation(fields: [userId], references: [id])
+  course Course @relation(fields: [courseId], references: [id])
+
+  @@index([userId, courseId])
+  @@map("certificates")
+}
+
+model Coupon {
+  id              String    @id @db.Uuid
+  createdAt       DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz()
+  code            String    @unique @db.VarChar(191)
+  discountType    String    @default("percent") @map("discount_type") @db.VarChar(32)
+  discountPercent Decimal?  @map("discount_percent") @db.Decimal(8, 2)
+  discountAmount  Decimal?  @map("discount_amount") @db.Decimal(16, 2)
+  expiresAt       DateTime? @map("expires_at") @db.Timestamptz()
+  usageLimit      BigInt?   @map("usage_limit")
+  usageCount      BigInt    @default(0) @map("usage_count")
+  isActive        Boolean   @default(true) @map("is_active")
+  legacyWpId      BigInt?   @unique @map("legacy_wp_id")
+
+  payments   Payment[]
+  orderItems OrderItem[]
+
+  @@map("coupons")
+}
+
+model Order {
+  id             String    @id @db.Uuid
+  createdAt      DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt      DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz()
+  userId         String?   @map("user_id") @db.Uuid
+  status         String    @db.VarChar(32)
+  sourceStatus   String    @map("source_status") @db.VarChar(32)
+  currency       String    @default("USD") @db.VarChar(8)
+  total          Decimal   @db.Decimal(16, 2)
+  provider       String    @db.VarChar(64)
+  providerTitle  String?   @map("provider_title") @db.VarChar(191)
+  transactionId  String?   @map("transaction_id") @db.VarChar(255)
+  paidAt         DateTime? @map("paid_at") @db.Timestamptz()
+  completedAt    DateTime? @map("completed_at") @db.Timestamptz()
+  legacyWpId     BigInt?   @unique @map("legacy_wp_id")
+
+  user        User?            @relation(fields: [userId], references: [id])
+  items       OrderItem[]
+  refunds     OrderRefund[]
+  payments    Payment[]
+  enrollments Enrollment[]
+  earnings    InstructorEarning[]
+
+  @@index([userId, status])
+  @@index([provider])
+  @@map("orders")
+}
+
+model OrderItem {
+  id              String   @id @db.Uuid
+  orderId         String   @map("order_id") @db.Uuid
+  courseId        String?  @map("course_id") @db.Uuid
+  couponId        String?  @map("coupon_id") @db.Uuid
+  itemType        String   @map("item_type") @db.VarChar(32)
+  name            String   @db.VarChar(500)
+  quantity        Int      @default(1)
+  lineSubtotal    Decimal? @map("line_subtotal") @db.Decimal(16, 2)
+  lineTotal       Decimal? @map("line_total") @db.Decimal(16, 2)
+  couponCode      String?  @map("coupon_code") @db.VarChar(64)
+  legacyItemId    BigInt?  @unique @map("legacy_item_id")
+  legacyProductId BigInt?  @map("legacy_product_id")
+
+  order   Order    @relation(fields: [orderId], references: [id])
+  course  Course?  @relation(fields: [courseId], references: [id])
+  coupon  Coupon?  @relation(fields: [couponId], references: [id])
+  payment Payment?
+
+  @@index([orderId])
+  @@index([courseId])
+  @@map("order_items")
+}
+
+model OrderRefund {
+  id         String    @id @db.Uuid
+  createdAt  DateTime? @map("created_at") @db.Timestamptz()
+  orderId    String    @map("order_id") @db.Uuid
+  amount     Decimal   @db.Decimal(16, 2)
+  reason     String?   @db.Text
+  legacyWpId BigInt?   @unique @map("legacy_wp_id")
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@map("order_refunds")
+}
+
+model Payment {
+  id                 String    @id @db.Uuid
+  createdAt          DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt          DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt          DateTime? @map("deleted_at") @db.Timestamptz()
+  userId             String?   @map("user_id") @db.Uuid
+  courseId           String    @map("course_id") @db.Uuid
+  orderId            String?   @map("order_id") @db.Uuid
+  orderItemId        String?   @unique @map("order_item_id") @db.Uuid
+  amount             Decimal   @db.Decimal(16, 2)
+  currency           String    @default("USD") @db.VarChar(8)
+  status             String    @default("pending") @db.VarChar(32)
+  provider           String    @default("stripe") @db.VarChar(32)
+  transactionId      String?   @map("transaction_id") @db.VarChar(255)
+  idempotencyKey     String?   @unique @map("idempotency_key") @db.VarChar(128)
+  couponId           String?   @map("coupon_id") @db.Uuid
+  providerRefId      String?   @map("provider_ref_id") @db.VarChar(255)
+  paidAt             DateTime? @map("paid_at") @db.Timestamptz()
+  refundedAt         DateTime? @map("refunded_at") @db.Timestamptz()
+  refundReason       String?   @map("refund_reason") @db.Text
+  legacyOrderItemId  BigInt?   @unique @map("legacy_order_item_id")
+
+  user      User?      @relation(fields: [userId], references: [id])
+  course    Course     @relation(fields: [courseId], references: [id])
+  order     Order?     @relation(fields: [orderId], references: [id])
+  orderItem OrderItem? @relation(fields: [orderItemId], references: [id])
+  coupon    Coupon?    @relation(fields: [couponId], references: [id])
+
+  @@index([orderId])
+  @@index([userId, courseId])
+  @@map("payments")
+}
+
+model InstructorEarning {
+  id                String    @id @db.Uuid
+  createdAt         DateTime? @map("created_at") @db.Timestamptz()
+  userId            String?   @map("user_id") @db.Uuid
+  courseId          String?   @map("course_id") @db.Uuid
+  orderId           String?   @map("order_id") @db.Uuid
+  legacyEarningId   BigInt?   @unique @map("legacy_earning_id")
+  legacyOrderId     BigInt?   @map("legacy_order_id")
+  orderStatus       String?   @map("order_status") @db.VarChar(50)
+  coursePriceTotal  Decimal?  @map("course_price_total") @db.Decimal(16, 2)
+  grandTotal        Decimal?  @map("grand_total") @db.Decimal(16, 2)
+  instructorAmount  Decimal?  @map("instructor_amount") @db.Decimal(16, 2)
+  instructorRate    Decimal?  @map("instructor_rate") @db.Decimal(16, 2)
+  adminAmount       Decimal?  @map("admin_amount") @db.Decimal(16, 2)
+  adminRate         Decimal?  @map("admin_rate") @db.Decimal(16, 2)
+  commissionType    String?   @map("commission_type") @db.VarChar(20)
+  deductFeesAmount  Decimal?  @map("deduct_fees_amount") @db.Decimal(16, 2)
+  deductFeesName    String?   @map("deduct_fees_name") @db.VarChar(250)
+  deductFeesType    String?   @map("deduct_fees_type") @db.VarChar(20)
+  processBy         String?   @map("process_by") @db.VarChar(20)
+
+  user   User?   @relation("EarningInstructor", fields: [userId], references: [id])
+  course Course? @relation(fields: [courseId], references: [id])
+  order  Order?  @relation(fields: [orderId], references: [id])
+
+  @@index([userId])
+  @@index([orderId])
+  @@index([processBy])
+  @@map("instructor_earnings")
+}
+
+model InstructorWithdrawal {
+  id               String    @id @db.Uuid
+  createdAt        DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt        DateTime? @map("updated_at") @db.Timestamptz()
+  userId           String?   @map("user_id") @db.Uuid
+  amount           Decimal?  @db.Decimal(16, 2)
+  methodData       String?   @map("method_data") @db.Text
+  status           String?   @db.VarChar(50)
+  legacyWithdrawId BigInt?   @unique @map("legacy_withdraw_id")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId, status])
+  @@map("instructor_withdrawals")
+}
+
+model CourseReview {
+  id              String    @id @db.Uuid
+  createdAt       DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz()
+  userId          String    @map("user_id") @db.Uuid
+  courseId        String    @map("course_id") @db.Uuid
+  rating          BigInt
+  comment         String?   @db.Text
+  isApproved      Boolean   @default(true) @map("is_approved")
+  legacyCommentId BigInt?   @unique @map("legacy_comment_id")
+
+  user   User   @relation(fields: [userId], references: [id])
+  course Course @relation(fields: [courseId], references: [id])
+
+  @@map("course_reviews")
+}
+
+model Notification {
+  id        String    @id @db.Uuid
+  createdAt DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz()
+  userId    String    @map("user_id") @db.Uuid
+  type      String    @db.VarChar(64)
+  title     String    @db.VarChar(512)
+  body      String    @db.Text
+  meta      Json?
+  readAt    DateTime? @map("read_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("notifications")
+}
+
+model UploadedFile {
+  id            String    @id @db.Uuid
+  createdAt     DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt     DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz()
+  userId        String    @map("user_id") @db.Uuid
+  storageDriver String    @map("storage_driver") @db.VarChar(16)
+  storageKey    String    @unique @map("storage_key") @db.VarChar(512)
+  originalName  String?   @map("original_name") @db.VarChar(255)
+  contentType   String    @map("content_type") @db.VarChar(128)
+  size          BigInt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("uploaded_files")
+}
+
+model AuditLog {
+  id         String    @id @db.Uuid
+  createdAt  DateTime? @map("created_at") @db.Timestamptz()
+  userId     String?   @map("user_id") @db.Uuid
+  roleSlug   String?   @map("role_slug") @db.VarChar(64)
+  method     String    @db.VarChar(16)
+  path       String    @db.VarChar(512)
+  statusCode BigInt    @map("status_code")
+  durationMs BigInt?   @map("duration_ms")
+  clientIp   String?   @map("client_ip") @db.VarChar(128)
+  userAgent  String?   @map("user_agent") @db.VarChar(512)
+  requestId  String?   @map("request_id") @db.VarChar(64)
+  metadata   Json?
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
+
+model Quiz {
+  id               String    @id @db.Uuid
+  createdAt        DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt        DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz()
+  courseId         String    @map("course_id") @db.Uuid
+  sectionId        String?   @map("section_id") @db.Uuid
+  title            String    @db.VarChar(255)
+  description      String?   @db.Text
+  timeLimitSecs    BigInt    @default(0) @map("time_limit_secs")
+  passPercent      Decimal   @default(60) @map("pass_percent") @db.Decimal(8, 2)
+  maxAttempts      BigInt    @default(0) @map("max_attempts")
+  shuffleQuestions Boolean   @default(false) @map("shuffle_questions")
+  feedbackMode     String?   @map("feedback_mode") @db.VarChar(24)
+  published        Boolean   @default(false)
+  requiredForCert  Boolean   @default(false) @map("required_for_cert")
+  legacyWpId       BigInt?   @unique @map("legacy_wp_id")
+
+  course    Course         @relation(fields: [courseId], references: [id])
+  section   Section?       @relation(fields: [sectionId], references: [id])
+  questions QuizQuestion[]
+  attempts  QuizAttempt[]
+
+  @@index([courseId])
+  @@map("quizzes")
+}
+
+model QuizQuestion {
+  id                String    @id @db.Uuid
+  createdAt         DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt         DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz()
+  quizId            String    @map("quiz_id") @db.Uuid
+  type              String    @db.VarChar(32)
+  text              String    @db.Text
+  explanation       String?   @db.Text
+  points            Decimal   @default(1) @db.Decimal(9, 2)
+  sortOrder         BigInt    @default(0) @map("sort_order")
+  optionsJson       Json?     @map("options_json")
+  correctAnswer     String?   @map("correct_answer") @db.Text
+  legacyQuestionId  BigInt?   @unique @map("legacy_question_id")
+
+  quiz    Quiz                 @relation(fields: [quizId], references: [id])
+  answers QuizAttemptAnswer[]
+
+  @@index([quizId, sortOrder])
+  @@map("quiz_questions")
+}
+
+model QuizAttempt {
+  id                   String    @id @db.Uuid
+  createdAt            DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt            DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt            DateTime? @map("deleted_at") @db.Timestamptz()
+  quizId               String    @map("quiz_id") @db.Uuid
+  userId               String    @map("user_id") @db.Uuid
+  startedAt            DateTime  @map("started_at") @db.Timestamptz()
+  finishedAt           DateTime? @map("finished_at") @db.Timestamptz()
+  score                Decimal   @default(0) @db.Decimal(9, 2)
+  maxScore             Decimal   @default(0) @map("max_score") @db.Decimal(9, 2)
+  percent              Decimal   @default(0) @db.Decimal(8, 2)
+  passed               Boolean   @default(false)
+  attemptNum           BigInt    @default(1) @map("attempt_num")
+  attemptStatus        String?   @map("attempt_status") @db.VarChar(32)
+  result               String?   @db.VarChar(16)
+  totalQuestions       Int?      @map("total_questions")
+  totalAnswered        Int?      @map("total_answered")
+  isManuallyReviewed   Boolean   @default(false) @map("is_manually_reviewed")
+  manuallyReviewedAt   DateTime? @map("manually_reviewed_at") @db.Timestamptz()
+  attemptIp            String?   @map("attempt_ip") @db.VarChar(64)
+  attemptInfoJson      Json?     @map("attempt_info_json")
+  legacyAttemptId      BigInt?   @unique @map("legacy_attempt_id")
+
+  quiz    Quiz                @relation(fields: [quizId], references: [id])
+  user    User                @relation(fields: [userId], references: [id])
+  answers QuizAttemptAnswer[]
+
+  @@index([userId, quizId])
+  @@map("quiz_attempts")
+}
+
+model QuizAttemptAnswer {
+  id             String    @id @db.Uuid
+  createdAt      DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt      DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz()
+  attemptId      String    @map("attempt_id") @db.Uuid
+  questionId     String    @map("question_id") @db.Uuid
+  answer         String    @db.Text
+  isCorrect      Boolean   @default(false) @map("is_correct")
+  pointsAwarded  Decimal   @default(0) @map("points_awarded") @db.Decimal(8, 2)
+  pointsDeducted Decimal   @default(0) @map("points_deducted") @db.Decimal(8, 2)
+  legacyAnswerId BigInt?   @unique @map("legacy_answer_id")
+
+  attempt  QuizAttempt  @relation(fields: [attemptId], references: [id])
+  question QuizQuestion @relation(fields: [questionId], references: [id])
+
+  @@index([attemptId])
+  @@map("quiz_attempt_answers")
+}
+
+model ResearchCategory {
+  id        String    @id @db.Uuid
+  createdAt DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz()
+  name      String    @db.VarChar(128)
+  slug      String    @unique @db.VarChar(64)
+
+  papers ResearchPaperCategory[]
+
+  @@map("research_categories")
+}
+
+model ResearchPaper {
+  id        String    @id @db.Uuid
+  createdAt DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz()
+  authorId  String    @map("author_id") @db.Uuid
+  title     String    @db.VarChar(512)
+  abstract  String?   @db.Text
+  pdfUrl    String    @map("pdf_url") @db.VarChar(2048)
+  status    String    @default("draft") @db.VarChar(32)
+
+  author     User                     @relation(fields: [authorId], references: [id])
+  categories ResearchPaperCategory[]
+  reviews    ResearchReview[]
+
+  @@map("research_papers")
+}
+
+model ResearchPaperCategory {
+  researchPaperId String @map("research_paper_id") @db.Uuid
+  categoryId      String @map("category_id") @db.Uuid
+
+  paper    ResearchPaper    @relation(fields: [researchPaperId], references: [id])
+  category ResearchCategory @relation(fields: [categoryId], references: [id])
+
+  @@id([researchPaperId, categoryId])
+  @@map("research_paper_categories")
+}
+
+model ResearchReview {
+  id         String    @id @db.Uuid
+  createdAt  DateTime? @map("created_at") @db.Timestamptz()
+  updatedAt  DateTime? @map("updated_at") @db.Timestamptz()
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz()
+  paperId    String    @map("paper_id") @db.Uuid
+  reviewerId String    @map("reviewer_id") @db.Uuid
+  comment    String    @db.Text
+  rating     BigInt?
+
+  paper    ResearchPaper @relation(fields: [paperId], references: [id])
+  reviewer User          @relation(fields: [reviewerId], references: [id])
+
+  @@map("research_reviews")
+}
+
+model SiteSetting {
+  id        String   @id @db.Uuid
+  key       String   @unique @db.VarChar(120)
+  value     String   @db.Text
+  createdAt DateTime @map("created_at") @db.Timestamptz()
+  updatedAt DateTime @map("updated_at") @db.Timestamptz()
+
+  @@map("site_settings")
+}
+
+model LegacyIdMap {
+  entityType String   @map("entity_type") @db.VarChar(64)
+  legacyId   BigInt   @map("legacy_id")
+  entityUuid String   @map("entity_uuid") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@id([entityType, legacyId])
+  @@index([entityUuid])
+  @@map("legacy_id_map")
+}
+
+model MigrationException {
+  id         String   @id @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  entityType String   @map("entity_type") @db.VarChar(64)
+  // 0 means "no single source id". NOT NULL so the unique key below dedupes on rerun
+  // (PostgreSQL treats NULLs as distinct in a unique index).
+  legacyId   BigInt   @default(0) @map("legacy_id")
+  code       String   @db.VarChar(64)
+  detail     String?  @db.VarChar(255)
+
+  @@unique([code, entityType, legacyId])
+  @@index([code, entityType])
+  @@map("migration_exceptions")
+}
+
+/// A1: one-time e-mail codes (password reset / verify e-mail). Only an HMAC of the code is stored.
+model EmailCode {
+  id         String    @id @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  purpose    String    @db.VarChar(32)
+  codeHash   String    @map("code_hash") @db.VarChar(128)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz()
+  attempts   Int       @default(0)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz()
+  ip         String?   @db.VarChar(255)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose, createdAt(sort: Desc)], map: "email_codes_user_purpose_created_idx")
+  @@map("email_codes")
+}

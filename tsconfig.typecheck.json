@@ -1,0 +1,13 @@
+{
+  "//": "Type-check only (node node_modules/typescript/bin/tsc -p tsconfig.typecheck.json). This checkout's @prisma/client lacks its .d.ts re-export files, so point it at the generated client.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "paths": {
+      "@/*": ["./src/*"],
+      "@prisma/client": ["./node_modules/.prisma/client/default"]
+    }
+  },
+  "include": ["next-env.d.ts", "src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["node_modules", ".next"]
+}

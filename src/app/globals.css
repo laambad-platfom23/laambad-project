@@ -1,0 +1,369 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Light: Laambad — navy + orange brand on light surfaces */
+    --background: 210 40% 98%;
+    --foreground: 213 70% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 213 70% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 213 70% 12%;
+    /* Primary = navy blue from logo; orange is accent only */
+    --primary: 213 70% 14%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 213 35% 94%;
+    --secondary-foreground: 213 55% 16%;
+    --muted: 210 28% 95%;
+    --muted-foreground: 213 18% 36%;
+    /* Soft cool navy tint (pairs with navy primary; not pink/peach) */
+    --accent: 213 40% 95%;
+    --accent-foreground: 213 55% 16%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 213 20% 88%;
+    --input: 213 20% 84%;
+    --ring: 11 81% 53%;
+    --radius: 0.75rem;
+    /* Brand orange (logo #E84A27): main call-to-action in both modes */
+    --brand: 11 81% 53%;
+    --brand-foreground: 0 0% 100%;
+    --brand-hover: 11 74% 47%;
+    --brand-soft: 11 90% 96%;
+    /* Status colours (badges, progress) — never used for primary buttons */
+    --success: 152 62% 33%;
+    --success-foreground: 0 0% 100%;
+    --success-soft: 150 60% 94%;
+    --warning: 33 92% 42%;
+    --warning-foreground: 0 0% 100%;
+    --warning-soft: 40 95% 93%;
+  }
+
+  /**
+   * Dark: deep navy surfaces (logo navy), brand orange for primary actions — the same
+   * brand pair as light mode, instead of an unrelated blue.
+   */
+  .dark {
+    --background: 214 62% 6%;
+    --foreground: 0 0% 100%;
+    --card: 213 50% 10%;
+    --card-foreground: 0 0% 100%;
+    --popover: 213 50% 10%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 11 88% 58%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 213 38% 17%;
+    --secondary-foreground: 0 0% 100%;
+    /* lighter than card so skeletons and muted fills are visible on cards */
+    --muted: 213 36% 17%;
+    --muted-foreground: 213 25% 76%;
+    --accent: 213 38% 18%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 213 30% 21%;
+    /* input borders must stand out from the card */
+    --input: 213 28% 28%;
+    --ring: 11 100% 64%;
+    --brand: 11 100% 64%;
+    --brand-foreground: 0 0% 100%;
+    --brand-hover: 11 88% 58%;
+    --brand-soft: 11 55% 15%;
+    --success: 152 55% 46%;
+    --success-foreground: 214 62% 6%;
+    --success-soft: 152 45% 13%;
+    --warning: 38 92% 56%;
+    --warning-foreground: 214 62% 6%;
+    --warning-soft: 38 60% 13%;
+  }
+}
+
+@layer base {
+  /* Edge/IE draw their own "reveal password" eye: we already have one → it showed two eyes. */
+  input::-ms-reveal,
+  input::-ms-clear {
+    display: none;
+  }
+  /* Browser autofill paints a light-blue box over only the <input>; keep the field's own colour
+     (a wrapper can set --autofill-bg to its background). */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus {
+    -webkit-box-shadow: 0 0 0 1000px var(--autofill-bg, hsl(var(--background))) inset !important;
+    -webkit-text-fill-color: hsl(var(--foreground)) !important;
+    caret-color: hsl(var(--foreground));
+    transition: background-color 9999s ease-out 0s;
+  }
+  * {
+    @apply border-border;
+  }
+  /* clickable things show the hand cursor (Tailwind preflight sets buttons to the default arrow) */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="menuitem"],
+  [role="option"],
+  [role="tab"],
+  [role="switch"],
+  [role="checkbox"],
+  [role="radio"],
+  [role="combobox"],
+  select:not(:disabled),
+  summary,
+  label[for],
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled) {
+    cursor: pointer;
+  }
+  button:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer utilities {
+  /**
+   * Brand CTAs — primary navy (#0B1F3A). Logo orange-red (#E84A27) is accent only.
+   */
+  .btn-brand-contrast {
+    @apply bg-[#0B1F3A] font-semibold text-white shadow-md transition hover:bg-[#061528];
+  }
+  .btn-brand-solid {
+    @apply bg-[#0B1F3A] font-semibold text-white shadow-md transition hover:bg-[#061528];
+  }
+  .btn-brand-soft {
+    @apply bg-[#123252] font-semibold text-white shadow-md transition hover:bg-[#0B1F3A];
+  }
+  /* dark mode: navy buttons would vanish on navy surfaces → brand orange */
+  .dark .btn-brand-contrast,
+  .dark .btn-brand-solid {
+    @apply bg-[#E84A27] hover:bg-[#FF6B45];
+  }
+
+  /** Top header promo marquee — scrolls right only (continuous loop) */
+  .sodemy-marquee {
+    mask-image: linear-gradient(to right, transparent, black 3%, black 97%, transparent);
+  }
+  .sodemy-marquee-track {
+    display: inline-flex;
+    width: max-content;
+    will-change: transform;
+    animation: sodemy-marquee-scroll 32s linear infinite;
+    animation-direction: normal;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sodemy-marquee-track {
+      animation: none;
+      white-space: normal !important;
+      text-align: center;
+      padding-inline: 1rem;
+      width: 100%;
+      display: block;
+    }
+    .sodemy-marquee-track span[aria-hidden] {
+      display: none;
+    }
+  }
+
+  .glass {
+    @apply border border-white/20 bg-white/70 backdrop-blur-xl;
+  }
+  .dark .glass {
+    border-color: rgba(255, 255, 255, 0.22);
+    background-color: rgba(6, 21, 40, 0.72);
+  }
+  .glass-card {
+    @apply rounded-xl border border-white/30 bg-white/80 shadow-lg shadow-black/5 backdrop-blur-lg;
+  }
+  .dark .glass-card {
+    border-color: rgba(255, 255, 255, 0.2);
+    background-color: rgba(6, 21, 40, 0.85);
+    box-shadow: 0 10px 28px -12px rgba(0, 0, 0, 0.45);
+  }
+  /** Do not use the name `animate-in` — it conflicts with tailwindcss-animate (Sheet, Dialog, menus). */
+  .animate-fade-in-up {
+    animation: fade-in 0.5s ease-out forwards;
+  }
+
+  /** Staggered hero copy entrance (children use --stagger) */
+  .hero-stagger > * {
+    animation: fade-in 0.55s ease-out both;
+  }
+  .hero-stagger > *:nth-child(1) {
+    animation-delay: 0.05s;
+  }
+  .hero-stagger > *:nth-child(2) {
+    animation-delay: 0.12s;
+  }
+  .hero-stagger > *:nth-child(3) {
+    animation-delay: 0.2s;
+  }
+  .hero-stagger > *:nth-child(4) {
+    animation-delay: 0.28s;
+  }
+  .hero-stagger > *:nth-child(5) {
+    animation-delay: 0.36s;
+  }
+
+  /** Soft CTA sheen on hover */
+  .btn-sheen {
+    position: relative;
+    overflow: hidden;
+  }
+  /* the hover "sheen" was a moving gradient: disabled (no gradients on the site) */
+  .btn-sheen::after {
+    display: none;
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      105deg,
+      transparent 40%,
+      rgba(255, 255, 255, 0.28) 50%,
+      transparent 60%
+    );
+    transform: translateX(-120%);
+    transition: transform 0.6s ease;
+    pointer-events: none;
+  }
+  .btn-sheen:hover::after {
+    transform: translateX(120%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-hero-bar,
+  .animate-desk-bar {
+    animation: none !important;
+    transform: scaleY(1) !important;
+    filter: none !important;
+  }
+  .animate-hero-line {
+    animation: none !important;
+    stroke-dashoffset: 0 !important;
+  }
+  .animate-desk-strip {
+    animation: none !important;
+    transform: none !important;
+  }
+  .animate-hero-float,
+  .animate-hero-glow,
+  .animate-orbit-spin,
+  .animate-orbit-spin-reverse,
+  .animate-orbit-ring,
+  .animate-hero-chip,
+  .animate-hero-live,
+  .animate-hero-trend {
+    animation: none !important;
+  }
+  .animate-money-drift {
+    animation: none !important;
+    opacity: 0.22 !important;
+    transform: none !important;
+  }
+  .animate-hero-badge-glow {
+    animation: none !important;
+    filter: none !important;
+    text-shadow: none !important;
+  }
+  .hero-stagger > * {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .btn-sheen::after {
+    display: none;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* Positive X = rightward only; -50% → 0 loops the duplicated span seamlessly */
+@keyframes sodemy-marquee-scroll {
+  from {
+    transform: translate3d(-50%, 0, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/** Clients & partners logo strip */
+.sodemy-partners-marquee {
+  mask-image: linear-gradient(to right, transparent, black 4%, black 96%, transparent);
+}
+.sodemy-partners-track {
+  will-change: transform;
+  animation: sodemy-partners-scroll 40s linear infinite;
+}
+.sodemy-partners-marquee:hover .sodemy-partners-track {
+  animation-play-state: paused;
+}
+@keyframes sodemy-partners-scroll {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sodemy-partners-track {
+    animation: none;
+    flex-wrap: wrap;
+    width: 100% !important;
+    max-width: 72rem;
+    margin-inline: auto;
+    justify-content: center;
+  }
+}
+
+/* Certificate: print exactly one US-letter landscape page (the canvas image fills the page) */
+@media print {
+  @page {
+    size: letter landscape;
+    margin: 0;
+  }
+  body * {
+    visibility: hidden !important;
+  }
+  .certificate-print-area,
+  .certificate-print-area * {
+    visibility: visible !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .certificate-print-area {
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 11in !important;
+    height: 8.5in !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  .certificate-print-area .certificate-image {
+    width: 11in !important;
+    height: 8.5in !important;
+  }
+}
