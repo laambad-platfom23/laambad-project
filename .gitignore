@@ -45,3 +45,5 @@ secrets/
 
 # Password test vectors stay local
 /scripts/test-vectors/
+
+.env*
