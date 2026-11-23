@@ -58,7 +58,7 @@ export async function issueEmailCode(
        WHERE user_id = ${userId}::uuid AND purpose = ${purpose} AND consumed_at IS NULL`,
     prisma.$executeRaw`INSERT INTO email_codes (id, user_id, purpose, code_hash, expires_at, ip)
        VALUES (${id}::uuid, ${userId}::uuid, ${purpose}, ${hashCode(id, purpose, code)},
-               now() + make_interval(mins => ${minutes}), ${ip ? ip.slice(0, 255) : null})`,
+               now() + make_interval(mins => ${minutes}::int), ${ip ? ip.slice(0, 255) : null})`,
   ]);
   return { ok: true, code, minutes };
 }
