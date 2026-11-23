@@ -37,6 +37,7 @@ import { getApiErrorMessage } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
 import { courseCoverRawUrl, publicCourseCoverImageUrlFromRaw } from "@/lib/course-cover";
 import { cn } from "@/lib/utils";
+import { SODEMY_CONTACT } from "@/lib/sodemy-contact";
 
 function formatMinor(amount: number, currency: string) {
   return new Intl.NumberFormat("en-US", {
@@ -79,7 +80,7 @@ function MethodButton({
       <span
         className={cn(
           "mt-0.5 flex h-4 w-4 shrink-0 rounded-full border-2",
-          active ? "border-[#0B1F3A] bg-[#0B1F3A] dark:border-[#FF6B45]" : "border-muted-foreground/40"
+          active ? "border-[#E84A27] bg-[#E84A27] dark:border-[#FF6B45] dark:bg-[#FF6B45]" : "border-muted-foreground/40"
         )}
       >
         {active ? <span className="m-auto block h-1.5 w-1.5 rounded-full bg-white" /> : null}
@@ -89,7 +90,7 @@ function MethodButton({
         <span className="flex items-center gap-2 font-medium text-foreground">
           {title}
           {badge ? (
-            <span className="rounded-full bg-success-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-success">
+            <span className="rounded-full bg-[#E84A27]/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#E84A27] dark:bg-[#FF6B45]/15 dark:text-[#FF8A66]">
               {badge}
             </span>
           ) : null}
@@ -218,6 +219,7 @@ function CheckoutInner() {
   const [senderPhone, setSenderPhone] = useState("");
   const [payRef, setPayRef] = useState("");
   const [waafiDialog, setWaafiDialog] = useState<WaafiDialogState>(null);
+  const [manualDone, setManualDone] = useState<ManualOrder | null>(null);
   const [couponInput, setCouponInput] = useState("");
   const [couponPreview, setCouponPreview] = useState<CouponPreviewResponse | null>(null);
 
@@ -273,8 +275,14 @@ function CheckoutInner() {
         router.push(`/learn/${encodeURIComponent(course!.slug)}`);
         return;
       }
-      toast.success("Request submitted. We will open your course as soon as we confirm your transfer.");
-      router.push("/dashboard/payments");
+      // Show the WhatsApp contact so the student can send the proof of transfer to the admin right away.
+      setManualDone({
+        courseTitle: course!.title,
+        amount: formatMinor(totalMinor, currency),
+        senderPhone: senderPhone.trim(),
+        reference: payRef.trim(),
+        paymentId: String((payment as { id?: string }).id ?? ""),
+      });
     },
     onError: (err: unknown) => {
       toast.error(getApiErrorMessage(err, "Could not submit the payment request"));
@@ -484,7 +492,12 @@ function CheckoutInner() {
 
               <div className="mt-4 divide-y divide-[#0B1F3A]/10 overflow-hidden rounded-xl border border-[#0B1F3A]/12 bg-white shadow-sm dark:divide-white/10 dark:border-white/20 dark:bg-[#061528]/80">
                 {/* 1 — WaafiPay: USSD prompt + PIN on the phone */}
-                <div className={cn(payMethod === "wafi" && "bg-[#E84A27]/[0.07] dark:bg-[#061528]")}>
+                <div
+                  className={cn(
+                    "border-l-[3px] border-l-transparent transition-colors",
+                    payMethod === "wafi" && "border-l-[#E84A27] bg-[#0B1F3A]/[0.03] dark:bg-[#061528]"
+                  )}
+                >
                   <MethodButton
                     active={payMethod === "wafi"}
                     onClick={() => setPayMethod("wafi")}
@@ -526,22 +539,17 @@ function CheckoutInner() {
                           <p className="text-xs text-destructive">Enter a 9-digit Somali mobile number, e.g. 61 234 5678.</p>
                         ) : null}
                       </div>
-                      <ol className="space-y-1 text-[12.5px] leading-snug text-muted-foreground">
-                        <li>
-                          <strong className="text-foreground">1.</strong> Press <strong className="text-foreground">Pay</strong> —
-                          a payment request appears on your phone.
-                        </li>
-                        <li>
-                          <strong className="text-foreground">2.</strong> Enter your wallet <strong className="text-foreground">PIN</strong> to
-                          confirm. The course opens right away.
-                        </li>
-                      </ol>
                     </div>
                   ) : null}
                 </div>
 
                 {/* 2 — Manual: send to the institute number, an admin verifies and opens the course */}
-                <div className={cn(payMethod === "offline" && "bg-[#E84A27]/[0.07] dark:bg-[#061528]")}>
+                <div
+                  className={cn(
+                    "border-l-[3px] border-l-transparent transition-colors",
+                    payMethod === "offline" && "border-l-[#E84A27] bg-[#0B1F3A]/[0.03] dark:bg-[#061528]"
+                  )}
+                >
                   <MethodButton
                     active={payMethod === "offline"}
                     onClick={() => setPayMethod("offline")}
@@ -819,7 +827,71 @@ function CheckoutInner() {
           router.push(`/learn/${encodeURIComponent(s)}`);
         }}
       />
+      <ManualOrderDialog
+        order={manualDone}
+        onClose={() => {
+          setManualDone(null);
+          router.push("/dashboard/payments");
+        }}
+      />
     </div>
+  );
+}
+
+type ManualOrder = {
+  courseTitle: string;
+  amount: string;
+  senderPhone: string;
+  reference: string;
+  paymentId: string;
+};
+
+function WhatsAppIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
+      <path d="M17.47 14.38c-.3-.15-1.75-.86-2.02-.96-.27-.1-.47-.15-.67.15-.2.3-.77.96-.94 1.16-.17.2-.35.22-.64.07-.3-.15-1.25-.46-2.38-1.47-.88-.79-1.47-1.76-1.65-2.06-.17-.3-.02-.46.13-.6.13-.14.3-.35.45-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.03-.52-.07-.15-.67-1.6-.92-2.2-.24-.58-.48-.5-.67-.51h-.57c-.2 0-.52.07-.8.37-.27.3-1.04 1.02-1.04 2.48s1.07 2.88 1.21 3.08c.15.2 2.1 3.2 5.08 4.49.71.31 1.26.49 1.7.63.71.23 1.36.2 1.87.12.57-.09 1.75-.72 2-1.41.25-.7.25-1.29.17-1.41-.07-.13-.27-.2-.57-.35M12.05 21.5h-.01a9.4 9.4 0 0 1-4.8-1.31l-.34-.2-3.57.93.95-3.48-.22-.36a9.4 9.4 0 0 1-1.44-5.02c0-5.2 4.23-9.43 9.44-9.43a9.4 9.4 0 0 1 9.43 9.44c0 5.2-4.24 9.43-9.44 9.43m8.03-17.47A11.3 11.3 0 0 0 12.05.7C5.79.7.7 5.79.7 12.04c0 2 .52 3.95 1.52 5.67L.6 23.6l6.02-1.58a11.3 11.3 0 0 0 5.42 1.38h.01c6.25 0 11.34-5.09 11.35-11.34 0-3.03-1.18-5.88-3.32-8.02" />
+    </svg>
+  );
+}
+
+/** After a manual (EVC to the institute number) order: one tap opens WhatsApp with the order details filled in. */
+function ManualOrderDialog({ order, onClose }: { order: ManualOrder | null; onClose: () => void }) {
+  const waNumber = SODEMY_CONTACT.whatsappUrl.replace(/\D/g, "");
+  const text = order
+    ? [
+        "Asc, waxaan iibsaday koorso Laambad (Manual payment / EVC Plus).",
+        `Koorsada: ${order.courseTitle}`,
+        `Lacagta: ${order.amount}`,
+        order.senderPhone ? `Lambarka aan ka diray: ${order.senderPhone}` : "",
+        order.reference ? `Transaction ID: ${order.reference}` : "",
+        order.paymentId ? `Order: ${order.paymentId.slice(0, 8)}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    : "";
+  const href = `https://wa.me/${waNumber}?text=${encodeURIComponent(text)}`;
+  return (
+    <Dialog open={!!order} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-sm text-center">
+        <CheckCircle2 className="mx-auto h-14 w-14 text-success" />
+        <DialogTitle className="text-lg">Order submitted</DialogTitle>
+        <DialogDescription className="text-[14px] leading-relaxed">
+          Send us your payment confirmation on WhatsApp and we will open your course as soon as we check the transfer.
+        </DialogDescription>
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#25D366] text-[15px] font-semibold text-white shadow-sm transition hover:bg-[#1ebe57]"
+        >
+          <WhatsAppIcon className="h-5 w-5" />
+          Send on WhatsApp
+        </a>
+        <Button variant="outline" className="w-full" onClick={onClose}>
+          Go to my payments
+        </Button>
+      </DialogContent>
+    </Dialog>
   );
 }
 
