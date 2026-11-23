@@ -38,7 +38,7 @@ const STATUS_META: Record<string, { label: string; cls: string; dot: string }> =
 const statusKey = (s?: string) => (s === "pending_review" ? "pending" : s && STATUS_META[s] ? s : "draft");
 
 /** Desktop columns: course | category | price | author | date | actions */
-const COLS = "xl:grid-cols-[minmax(0,1fr)_130px_70px_minmax(150px,180px)_100px_auto]";
+const COLS = "xl:grid-cols-[minmax(300px,1fr)_120px_64px_minmax(140px,170px)_96px_auto]";
 
 function priceText(c: Course): string {
   const p = c.active_pricing;
@@ -143,15 +143,16 @@ export function CourseManageList({
               {/* course */}
               <div className="flex w-full min-w-0 items-center gap-4 xl:w-auto">
                 <Thumb course={c} />
-                <div className="min-w-0">
+                <div className="flex min-w-0 flex-1 flex-col">
+                  {/* block wrapper keeps the clamped title's real height, so it never overlaps the stats */}
                   <Link
                     href={canEdit ? builder : publicHref}
-                    className="line-clamp-2 text-[15px] font-semibold leading-snug text-foreground transition-colors hover:text-brand"
+                    className="block text-[15px] font-semibold leading-snug text-foreground transition-colors hover:text-brand"
                     title={c.title}
                   >
-                    {c.title}
+                    <span className="line-clamp-2 break-words">{c.title}</span>
                   </Link>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[12.5px] text-muted-foreground">
+                  <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1 text-[12.5px] text-muted-foreground sm:flex sm:flex-wrap sm:gap-x-3.5">
                     <Stat icon={ListTree} label="Topic" value={c.section_count ?? 0} />
                     <Stat icon={FileText} label="Lesson" value={c.lesson_count ?? 0} />
                     <Stat icon={HelpCircle} label="Quiz" value={c.quiz_count ?? 0} />
