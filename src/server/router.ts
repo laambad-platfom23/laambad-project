@@ -352,6 +352,16 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
       requireRole(user, "admin");
       return json(await misc.approveOfflineEnrollment(v1.split("/")[2]));
     }
+    if (v1 === "admin/payments/pending" && method === "GET") {
+      const user = await requireAuth(req);
+      requireRole(user, "admin");
+      return json(await misc.adminPendingPayments());
+    }
+    if (v1 === "admin/payments/pending-count" && method === "GET") {
+      const user = await requireAuth(req);
+      requireRole(user, "admin");
+      return json(await misc.adminPendingPaymentsCount());
+    }
     if (v1 === "admin/payments" && method === "GET") {
       const user = await requireAuth(req);
       requireRole(user, "admin");

@@ -53,6 +53,13 @@ export const paymentsApi = {
 
   list: () => apiClient.get<DataResponse<Payment[]>>("/api/v1/payments"),
 
+  /** Admin "Orders" tab: pending payments only (newest first, max 200). */
+  listPendingAdmin: () =>
+    apiClient.get<{ total: number; data: Payment[] }>("/api/v1/admin/payments/pending"),
+
+  /** Admin sidebar badge. */
+  pendingCountAdmin: () => apiClient.get<{ total: number }>("/api/v1/admin/payments/pending-count"),
+
   /** Admin: all institute payments (optional server filters). */
   listAdmin: (params?: {
     user_id?: string;

@@ -423,6 +423,8 @@ export interface Payment {
   /** Admin institute report only (GET /api/v1/admin/payments) */
   student_name?: string;
   student_email?: string;
+  /** Admin Orders tab: the phone on the student's profile */
+  student_phone?: string;
   /** WaafiPay payer / manual sender wallet number (admin: full, student: masked) */
   payer_phone?: string;
   /** why a payment failed (WaafiPay refusal or admin rejection) */

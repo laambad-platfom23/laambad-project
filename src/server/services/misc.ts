@@ -914,6 +914,50 @@ export async function listMyPayments(userId: string) {
   );
 }
 
+/** Admin "Orders" tab: payments still waiting for a decision (manual EVC requests, unconfirmed WaafiPay). Newest first. */
+export async function adminPendingPayments() {
+  const where = { deletedAt: null, status: "pending" };
+  const [total, rows] = await Promise.all([
+    prisma.payment.count({ where }),
+    prisma.payment.findMany({
+      where,
+      take: 200,
+      orderBy: { createdAt: "desc" },
+      include: {
+        user: { select: { id: true, name: true, email: true, phone: true } },
+        course: { select: { id: true, title: true, slug: true } },
+      },
+    }),
+  ]);
+  return {
+    total,
+    data: ser(
+      rows.map((p) => ({
+        id: p.id,
+        user_id: p.userId,
+        course_id: p.courseId,
+        course_title: p.course ? decodeHtmlEntities(p.course.title) : undefined,
+        course_slug: p.course?.slug,
+        student_name: p.user?.name ?? (p.userId ? undefined : "Guest checkout"),
+        student_email: p.user?.email ?? undefined,
+        student_phone: p.user?.phone ?? undefined,
+        transaction_id: p.transactionId ?? undefined,
+        payer_phone: p.providerRefId && /^252\d{9}$/.test(p.providerRefId) ? `+${p.providerRefId}` : undefined,
+        amount: toMinor(p.amount),
+        currency: p.currency,
+        status: p.status,
+        provider: p.provider,
+        created_at: p.createdAt?.toISOString(),
+      }))
+    ),
+  };
+}
+
+/** Only the number, for the sidebar badge (cheap: one indexed count). */
+export async function adminPendingPaymentsCount() {
+  return { total: await prisma.payment.count({ where: { deletedAt: null, status: "pending" } }) };
+}
+
 export async function adminListPayments(page = 1, pageSize = 20) {
   const take = Math.min(Math.max(pageSize, 1), 100);
   const skip = (Math.max(page, 1) - 1) * take;

@@ -23,7 +23,10 @@ import {
   MessageSquare,
   Library,
   Image as ImageIcon,
+  ShoppingBag,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { paymentsApi } from "@/services/api/payments";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Logo } from "@/components/ui/logo";
@@ -42,6 +45,8 @@ type NavItem = {
   /** When set, item is shown only if the predicate returns true. */
   visible?: (user: AuthLikeUser) => boolean;
   children?: { label: string; href: string; icon: React.ComponentType<{ className?: string }> }[];
+  /** Live counter shown next to the label. */
+  badge?: "pendingOrders";
 };
 
 /** Learners: My Learning first — no institute-wide admin stats or staff tools. */
@@ -64,6 +69,13 @@ const studentNavItems: NavItem[] = [
  */
 const staffNavItems: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  {
+    label: "Orders",
+    href: "/dashboard/orders",
+    icon: ShoppingBag,
+    visible: (u) => isAdminUser(u),
+    badge: "pendingOrders",
+  },
   {
     label: "Payments",
     href: "/dashboard/payments",
@@ -135,6 +147,16 @@ export function Sidebar({ onLogout, collapsed: collapsedDesktop, onToggleCollaps
     (item) => !item.visible || item.visible(user),
   );
   const logoHref = defaultDashboardPathForUser(user);
+
+  // Admin: number of orders waiting for approval (one cheap count, refreshed every minute).
+  const showOrders = isAdminUser(user);
+  const { data: pending } = useQuery({
+    queryKey: ["admin-pending-count"],
+    queryFn: () => paymentsApi.pendingCountAdmin().then((r) => r.data.total),
+    enabled: showOrders,
+    refetchInterval: 60_000,
+  });
+  const badgeValue = (b?: NavItem["badge"]) => (b === "pendingOrders" && pending ? pending : 0);
 
   // The drawer on mobile is always full width; the icon rail only exists on desktop.
   const [isDesktop, setIsDesktop] = useState(true);
@@ -281,8 +303,18 @@ export function Sidebar({ onLogout, collapsed: collapsedDesktop, onToggleCollaps
                 collapsed && "justify-center px-2",
               )}
             >
-              <item.icon className="h-5 w-5 shrink-0" />
-              {!collapsed && <span>{item.label}</span>}
+              <span className="relative shrink-0">
+                <item.icon className="h-5 w-5" />
+                {collapsed && badgeValue(item.badge) ? (
+                  <span className="absolute -right-1.5 -top-1.5 h-2.5 w-2.5 rounded-full bg-[#E84A27] ring-2 ring-[#0B1F3A]" />
+                ) : null}
+              </span>
+              {!collapsed && <span className="flex-1">{item.label}</span>}
+              {!collapsed && badgeValue(item.badge) ? (
+                <span className="min-w-[1.5rem] rounded-full bg-[#E84A27] px-1.5 py-0.5 text-center text-[11px] font-bold leading-none text-white">
+                  {badgeValue(item.badge) > 99 ? "99+" : badgeValue(item.badge)}
+                </span>
+              ) : null}
             </Link>
           );
         })}
