@@ -23,24 +23,26 @@ export const learningApi = {
     ),
 };
 
-// ── Group discussion ──
+// ── Group discussion (chat) ──
 export type DiscussionMessage = {
   id: string;
-  parent_id: string | null;
   body: string;
+  image_url: string | null;
   deleted: boolean;
   is_pinned: boolean;
   created_at: string;
-  author: { id: string; name: string; avatar_url: string | null; is_staff: boolean };
+  mine: boolean;
+  author: { id: string; name: string; avatar_url: string | null; badge: "Instructor" | "Admin" | null };
+  reply_to: { id: string; author_name: string; mine: boolean; body: string; has_image: boolean; deleted: boolean } | null;
   can_delete: boolean;
-  replies: DiscussionMessage[];
 };
 export type DiscussionRoom = {
   course: { id: string; slug: string; title: string };
   member_count: number;
   is_moderator: boolean;
+  pinned: DiscussionMessage[];
   data: DiscussionMessage[];
-  has_more: boolean;
+  has_more_before: boolean;
 };
 export type DiscussionRoomSummary = {
   course_id: string;
@@ -52,14 +54,24 @@ export type DiscussionRoomSummary = {
 
 export const discussionsApi = {
   rooms: () => apiClient.get<DiscussionRoomSummary[]>("/api/v1/discussions"),
-  list: (course: string, before?: string) =>
-    apiClient.get<DiscussionRoom>(`/api/v1/courses/${encodeURIComponent(course)}/discussion`, {
-      params: before ? { before } : undefined,
+  list: (course: string, opts?: { before?: string; around?: string }) =>
+    apiClient.get<DiscussionRoom>(`/api/v1/courses/${encodeURIComponent(course)}/discussion`, { params: opts }),
+  search: (course: string, q: string) =>
+    apiClient.get<{ q: string; data: DiscussionMessage[] }>(`/api/v1/courses/${encodeURIComponent(course)}/discussion`, {
+      params: { q },
     }),
-  post: (course: string, body: string, parentId?: string | null) =>
+  uploadImage: (course: string, file: Blob, name: string) => {
+    const form = new FormData();
+    form.append("file", file, name);
+    return apiClient.post<{ url: string }>(`/api/v1/courses/${encodeURIComponent(course)}/discussion/images`, form, {
+      timeout: 120_000,
+    });
+  },
+  post: (course: string, body: string, parentId?: string | null, imageUrl?: string | null) =>
     apiClient.post<DiscussionMessage>(`/api/v1/courses/${encodeURIComponent(course)}/discussion`, {
       body,
       parent_id: parentId ?? null,
+      image_url: imageUrl ?? null,
     }),
   remove: (id: string) => apiClient.delete(`/api/v1/discussion-messages/${id}`),
   pin: (id: string, pinned: boolean) => apiClient.patch(`/api/v1/discussion-messages/${id}/pin`, { pinned }),

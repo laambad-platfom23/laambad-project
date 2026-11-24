@@ -956,11 +956,23 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
     }
     if (v1.match(/^courses\/[^/]+\/discussion$/) && method === "GET") {
       const user = await requireAuth(req);
-      return json(await discussions.listMessages(user, decodeURIComponent(v1.split("/")[1]), url.searchParams.get("before")));
+      const room = decodeURIComponent(v1.split("/")[1]);
+      const q = url.searchParams.get("q");
+      if (q !== null) return json(await discussions.searchMessages(user, room, q));
+      return json(
+        await discussions.listMessages(user, room, { before: url.searchParams.get("before"), around: url.searchParams.get("around") })
+      );
+    }
+    if (v1.match(/^courses\/[^/]+\/discussion\/images$/) && method === "POST") {
+      const user = await requireAuth(req);
+      const form = await req.formData();
+      const file = form.get("file");
+      if (!(file instanceof File)) throw Err.invalidInput("file required");
+      return json(await discussions.uploadImage(user, decodeURIComponent(v1.split("/")[1]), file), 201);
     }
     if (v1.match(/^courses\/[^/]+\/discussion$/) && method === "POST") {
       const user = await requireAuth(req);
-      const body = await readJson<{ body?: string; parent_id?: string | null }>(req);
+      const body = await readJson<{ body?: string; parent_id?: string | null; image_url?: string | null }>(req);
       return json(await discussions.postMessage(user, decodeURIComponent(v1.split("/")[1]), body ?? {}), 201);
     }
     if (v1.match(/^discussion-messages\/[^/]+$/) && method === "DELETE") {

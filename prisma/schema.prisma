@@ -889,6 +889,8 @@ model CourseDiscussionMessage {
   userId    String    @map("user_id") @db.Uuid
   parentId  String?   @map("parent_id") @db.Uuid
   body      String    @db.Text
+  /// A3: optional image (uploaded through the class room)
+  imageUrl  String?   @map("image_url") @db.VarChar(1024)
   isPinned  Boolean   @default(false) @map("is_pinned")
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt DateTime  @default(now()) @map("updated_at") @db.Timestamptz()
