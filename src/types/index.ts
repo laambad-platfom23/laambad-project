@@ -88,6 +88,12 @@ export interface CoursePricing {
 
 // ── Course ──
 export interface Course {
+  /** A5 */
+  sequential_lessons?: boolean;
+  certificate_template_id?: string | null;
+  review_note?: string | null;
+  submitted_at?: string | null;
+  prerequisites?: { id: string; title: string; slug: string }[];
   id: string;
   title: string;
   slug: string;
@@ -165,6 +171,10 @@ export interface Lesson {
   vdocipher_video_id?: string;
   duration_seconds?: number;
   is_preview?: boolean;
+  /** A5: sequential course — complete the earlier lessons first */
+  locked?: boolean;
+  /** A5: no access to the course (not enrolled) */
+  requires_enrollment?: boolean;
   attachments_json?: string;
   sort_order: number;
   duration_minutes?: number;
@@ -378,6 +388,8 @@ export interface SubmitAnswerInput {
 
 // ── Certificate ──
 export interface Certificate {
+  /** A5: certificate builder design of the course (null = default) */
+  design?: Partial<import("@/lib/certificate-render").CertificateDesign> | null;
   id: string;
   user_id: string;
   course_id: string;

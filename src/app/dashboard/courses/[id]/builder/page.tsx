@@ -1,5 +1,6 @@
 "use client";
 
+import { CourseSettingsCard } from "@/components/dashboard/course-settings-card";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -247,6 +248,13 @@ export default function CourseBuilderPage() {
         </div>
       </div>
 
+      {course.review_note && status !== "published" ? (
+        <div className="rounded-xl border border-warning/40 bg-warning-soft px-4 py-3 text-sm">
+          <p className="font-semibold text-warning">Changes requested by the reviewer</p>
+          <p className="mt-1 whitespace-pre-wrap text-foreground">{course.review_note}</p>
+        </div>
+      ) : null}
+
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight text-foreground">{decodeHtmlEntities(course.title)}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -362,6 +370,14 @@ export default function CourseBuilderPage() {
             </span>
           </label>
         </div>
+      ) : null}
+      {step === "additional" ? (
+        <CourseSettingsCard
+          key={course.id}
+          courseId={course.id}
+          sequential={!!course.sequential_lessons}
+          templateId={course.certificate_template_id ?? null}
+        />
       ) : null}
 
       {/* footer: previous / save / next */}

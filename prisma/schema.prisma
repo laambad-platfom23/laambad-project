@@ -63,6 +63,9 @@ model User {
   discussionMessages CourseDiscussionMessage[]
   bookOrders         BookOrder[]
   emailLogs          EmailLog[]
+  bundleOrders       BundleOrder[]
+  liveSessions       LiveSession[]
+  googleConnection   GoogleConnection?
 
   @@index([passwordScheme])
   @@map("users")
@@ -187,6 +190,15 @@ model Course {
   requirements       String?   @db.Text
   targetAudience     String?   @map("target_audience") @db.Text
   materials          String?   @db.Text
+  /// A5: review queue
+  submittedAt        DateTime? @map("submitted_at") @db.Timestamptz()
+  reviewedAt         DateTime? @map("reviewed_at") @db.Timestamptz()
+  reviewedBy         String?   @map("reviewed_by") @db.Uuid
+  reviewNote         String?   @map("review_note") @db.Text
+  /// A5: next lesson opens only after the previous one is completed
+  sequentialLessons  Boolean   @default(false) @map("sequential_lessons")
+  /// A5: certificate design (null = default design)
+  certificateTemplateId String? @map("certificate_template_id") @db.Uuid
 
   instructor   User                 @relation("CourseInstructor", fields: [instructorId], references: [id])
   category     CourseCategory?      @relation(fields: [categoryId], references: [id])
@@ -204,6 +216,11 @@ model Course {
   questions    LessonQuestion[]
   discussionMessages CourseDiscussionMessage[]
   pathLinks    LearningPathCourse[]
+  prerequisites CoursePrerequisite[] @relation("PrereqCourse")
+  requiredBy    CoursePrerequisite[] @relation("PrereqRequired")
+  bundleLinks   BundleCourse[]
+  liveSessions  LiveSession[]
+  certificateTemplate CertificateTemplate? @relation(fields: [certificateTemplateId], references: [id])
 
   @@index([instructorId, status])
   @@index([legacyProductId])
@@ -1034,4 +1051,124 @@ model EmailLog {
   @@unique([userId, kind, refKey], map: "email_log_user_kind_ref_uq")
   @@index([kind, createdAt(sort: Desc)], map: "email_log_kind_created_idx")
   @@map("email_log")
+}
+
+// ───────────── A5 (prisma/app-sql/A5-course-features.sql) ─────────────
+
+model CoursePrerequisite {
+  courseId         String   @map("course_id") @db.Uuid
+  requiredCourseId String   @map("required_course_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  course   Course @relation("PrereqCourse", fields: [courseId], references: [id])
+  required Course @relation("PrereqRequired", fields: [requiredCourseId], references: [id])
+
+  @@id([courseId, requiredCourseId])
+  @@map("course_prerequisites")
+}
+
+model CertificateTemplate {
+  id        String    @id @db.Uuid
+  name      String    @db.VarChar(120)
+  design    Json
+  isDefault Boolean   @default(false) @map("is_default")
+  createdBy String?   @map("created_by") @db.Uuid
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime  @default(now()) @map("updated_at") @db.Timestamptz()
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz()
+
+  courses Course[]
+
+  @@map("certificate_templates")
+}
+
+model Bundle {
+  id          String    @id @db.Uuid
+  title       String    @db.VarChar(255)
+  slug        String    @unique @db.VarChar(220)
+  description String?   @db.Text
+  coverUrl    String?   @map("cover_url") @db.VarChar(1024)
+  price       Decimal   @default(0) @db.Decimal(16, 2)
+  salePrice   Decimal?  @map("sale_price") @db.Decimal(16, 2)
+  currency    String    @default("USD") @db.VarChar(8)
+  status      String    @default("draft") @db.VarChar(16)
+  legacyWpId  BigInt?   @unique @map("legacy_wp_id")
+  createdBy   String?   @map("created_by") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime  @default(now()) @map("updated_at") @db.Timestamptz()
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz()
+
+  courses BundleCourse[]
+  orders  BundleOrder[]
+
+  @@map("bundles")
+}
+
+model BundleCourse {
+  bundleId  String @map("bundle_id") @db.Uuid
+  courseId  String @map("course_id") @db.Uuid
+  sortOrder Int    @default(0) @map("sort_order")
+
+  bundle Bundle @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id])
+
+  @@id([bundleId, courseId])
+  @@map("bundle_courses")
+}
+
+model BundleOrder {
+  id            String    @id @db.Uuid
+  bundleId      String    @map("bundle_id") @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  amount        Decimal   @default(0) @db.Decimal(16, 2)
+  currency      String    @default("USD") @db.VarChar(8)
+  status        String    @default("pending") @db.VarChar(16)
+  provider      String    @db.VarChar(16)
+  providerRefId String?   @map("provider_ref_id") @db.VarChar(255)
+  transactionId String?   @map("transaction_id") @db.VarChar(255)
+  note          String?   @db.Text
+  paidAt        DateTime? @map("paid_at") @db.Timestamptz()
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt     DateTime  @default(now()) @map("updated_at") @db.Timestamptz()
+
+  bundle Bundle @relation(fields: [bundleId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([userId, bundleId], map: "bundle_orders_user_idx")
+  @@index([status, createdAt(sort: Desc)], map: "bundle_orders_status_idx")
+  @@map("bundle_orders")
+}
+
+model LiveSession {
+  id            String   @id @db.Uuid
+  courseId      String   @map("course_id") @db.Uuid
+  instructorId  String   @map("instructor_id") @db.Uuid
+  title         String   @db.VarChar(255)
+  description   String?  @db.Text
+  startsAt      DateTime @map("starts_at") @db.Timestamptz()
+  durationMin   Int      @default(60) @map("duration_min")
+  meetUrl       String?  @map("meet_url") @db.VarChar(512)
+  googleEventId String?  @map("google_event_id") @db.VarChar(255)
+  status        String   @default("scheduled") @db.VarChar(16)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz()
+
+  course     Course @relation(fields: [courseId], references: [id])
+  instructor User   @relation(fields: [instructorId], references: [id])
+
+  @@index([courseId, startsAt], map: "live_sessions_course_start_idx")
+  @@map("live_sessions")
+}
+
+model GoogleConnection {
+  userId          String   @id @map("user_id") @db.Uuid
+  googleEmail     String?  @map("google_email") @db.VarChar(255)
+  refreshTokenEnc String   @map("refresh_token_enc") @db.Text
+  scope           String?  @db.Text
+  connectedAt     DateTime @default(now()) @map("connected_at") @db.Timestamptz()
+  updatedAt       DateTime @default(now()) @map("updated_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("google_connections")
 }

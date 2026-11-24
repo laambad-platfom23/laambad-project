@@ -1,3 +1,4 @@
+import * as prerequisites from "./prerequisites";
 import { notifyCertificate, notifyEnrolled, notifyPaymentRejected } from "@/server/notify";
 import { plain } from "@/lib/plain-text";
 import { randomBytes } from "node:crypto";
@@ -197,7 +198,12 @@ type CertRow = {
   createdAt: Date | null;
   updatedAt: Date | null;
   user: { id: string; name: string; email?: string };
-  course: { id: string; title: string; slug: string };
+  course: {
+    id: string;
+    title: string;
+    slug: string;
+    certificateTemplate?: { design: unknown; deletedAt: Date | null } | null;
+  };
 };
 
 /** Everything the certificate design needs (Tutor template tutor_cb_25649). */
@@ -220,6 +226,8 @@ async function certificateView(c: CertRow, opts: { includeEmail?: boolean } = {}
     duration: formatDuration(courseDurationMinutes(c.courseId)),
     user: { id: c.user.id, name: c.user.name, ...(opts.includeEmail ? { email: c.user.email } : {}) },
     course: { id: c.course.id, title: decodeHtmlEntities(c.course.title), slug: c.course.slug },
+    // A5: the course's certificate design (null = Laambad default)
+    design: c.course.certificateTemplate && !c.course.certificateTemplate.deletedAt ? c.course.certificateTemplate.design : null,
     created_at: c.createdAt?.toISOString(),
     updated_at: c.updatedAt?.toISOString(),
   });
@@ -227,7 +235,7 @@ async function certificateView(c: CertRow, opts: { includeEmail?: boolean } = {}
 
 const CERT_INCLUDE = {
   user: { select: { id: true, name: true, email: true } },
-  course: { select: { id: true, title: true, slug: true } },
+  course: { select: { id: true, title: true, slug: true, certificateTemplate: { select: { design: true, deletedAt: true } } } },
 } as const;
 
 export async function listCertificates(userId: string) {
@@ -688,6 +696,7 @@ export async function createPayment(
   const { amount, currency, couponId } = await checkoutAmount(courseId, input?.coupon_code);
   const existing = await findBestEnrollment(user.user_id, courseId);
   if (existing && hasCourseAccess(existing)) throw Err.alreadyEnrolled();
+  await prerequisites.assertMet(user, courseId); // A5
 
   // only manual requests are created here; WaafiPay goes through payWithWaafi (real charge)
   const provider = amount === 0 ? "free" : "offline";
@@ -756,6 +765,7 @@ export async function payWithWaafi(
   const { course, amount, currency, couponId } = await checkoutAmount(courseId, input.coupon_code);
   const existing = await findBestEnrollment(user.user_id, courseId);
   if (existing && hasCourseAccess(existing)) throw Err.alreadyEnrolled();
+  await prerequisites.assertMet(user, courseId); // A5
   if (amount === 0) {
     const free = await createPayment(user, courseId, { coupon_code: input.coupon_code });
     return { ...free, outcome: "approved" as const, course_slug: course.slug, message: "Enrolled" };

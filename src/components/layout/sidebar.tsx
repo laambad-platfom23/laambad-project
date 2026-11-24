@@ -28,9 +28,14 @@ import {
   MessagesSquare,
   BookMarked,
   MessageCircle,
+  ClipboardCheck,
+  Video,
+  Medal,
+  Layers,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { paymentsApi } from "@/services/api/payments";
+import { reviewApi } from "@/services/api/course-features";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Logo } from "@/components/ui/logo";
@@ -50,7 +55,7 @@ type NavItem = {
   visible?: (user: AuthLikeUser) => boolean;
   children?: { label: string; href: string; icon: React.ComponentType<{ className?: string }> }[];
   /** Live counter shown next to the label. */
-  badge?: "pendingOrders";
+  badge?: "pendingOrders" | "pendingReviews";
 };
 
 /** Learners: My Learning first — no institute-wide admin stats or staff tools. */
@@ -59,6 +64,8 @@ const studentNavItems: NavItem[] = [
   { label: "My Learning", href: "/dashboard/my-learning", icon: GraduationCap },
   { label: "My courses", href: "/dashboard/my-courses", icon: BookOpen },
   { label: "Learning paths", href: "/dashboard/learning-paths", icon: Route },
+  { label: "Diplomas", href: "/dashboard/bundles", icon: Layers },
+  { label: "Live sessions", href: "/dashboard/live-sessions", icon: Video },
   { label: "Group discussion", href: "/dashboard/discussions", icon: MessagesSquare },
   { label: "Books", href: "/dashboard/books", icon: BookMarked },
   { label: "Browse catalog", href: "/courses", icon: Library },
@@ -91,6 +98,14 @@ const staffNavItems: NavItem[] = [
   },
   { label: "Courses", href: "/dashboard/courses", icon: BookOpen },
   {
+    label: "Course reviews",
+    href: "/dashboard/course-reviews",
+    icon: ClipboardCheck,
+    visible: (u) => isAdminUser(u),
+    badge: "pendingReviews",
+  },
+  { label: "Live sessions", href: "/dashboard/live-sessions", icon: Video },
+  {
     label: "Course categories",
     href: "/dashboard/course-categories",
     icon: Tags,
@@ -111,6 +126,8 @@ const staffNavItems: NavItem[] = [
   { label: "Assignments", href: "/dashboard/assignments", icon: ClipboardList },
   { label: "Learning paths", href: "/dashboard/learning-paths", icon: Route, visible: (u) => isAdminUser(u) },
   { label: "Books", href: "/dashboard/books/manage", icon: BookMarked, visible: (u) => isAdminUser(u) },
+  { label: "Diplomas", href: "/dashboard/bundles", icon: Layers, visible: (u) => isAdminUser(u) },
+  { label: "Certificate templates", href: "/dashboard/certificate-templates", icon: Medal, visible: (u) => isAdminUser(u) },
   { label: "Group discussion", href: "/dashboard/discussions", icon: MessagesSquare },
   { label: "WhatsApp", href: "/dashboard/whatsapp", icon: MessageCircle, visible: (u) => isAdminUser(u) },
   { label: "Reviews", href: "/dashboard/reviews", icon: MessageSquare },
@@ -167,7 +184,14 @@ export function Sidebar({ onLogout, collapsed: collapsedDesktop, onToggleCollaps
     enabled: showOrders,
     refetchInterval: 60_000,
   });
-  const badgeValue = (b?: NavItem["badge"]) => (b === "pendingOrders" && pending ? pending : 0);
+  const { data: pendingReviews } = useQuery({
+    queryKey: ["course-reviews-count"],
+    queryFn: () => reviewApi.count().then((r) => r.data.total),
+    enabled: showOrders,
+    refetchInterval: 120_000,
+  });
+  const badgeValue = (b?: NavItem["badge"]) =>
+    b === "pendingOrders" && pending ? pending : b === "pendingReviews" && pendingReviews ? pendingReviews : 0;
 
   // The drawer on mobile is always full width; the icon rail only exists on desktop.
   const [isDesktop, setIsDesktop] = useState(true);

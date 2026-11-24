@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { ABeeZee, Akaya_Kanadaka, Lexend } from "next/font/google";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { CERT_H, CERT_W, renderCertificate, type CertificateFonts } from "@/lib/certificate-render";
+import { CERT_H, CERT_W, renderCertificate, type CertificateDesign, type CertificateFonts } from "@/lib/certificate-render";
 import type { Certificate } from "@/types";
 
 /**
@@ -30,15 +30,22 @@ export function verifyUrl(verificationId: string) {
 }
 
 /** Render the certificate canvas at `scale` (2 = sharp on screen, 3 = print quality). */
-export function useCertificateCanvas(cert: Certificate | null | undefined, scale = 2) {
+export function useCertificateCanvas(
+  cert: Certificate | null | undefined,
+  scale = 2,
+  /** A5 builder preview: draw with this design instead of the certificate's own */
+  designOverride?: Partial<CertificateDesign> | null
+) {
   const [canvas, setCanvas] = useState<HTMLCanvasElement | null>(null);
   const [error, setError] = useState(false);
-  const key = cert ? `${cert.id}|${cert.verification_id}|${cert.student_name}|${cert.course_title}|${cert.duration}|${cert.completed_at}` : "";
+  const key = cert
+    ? `${cert.id}|${cert.verification_id}|${cert.student_name}|${cert.course_title}|${cert.duration}|${cert.completed_at}|${JSON.stringify(designOverride ?? cert.design ?? null)}`
+    : "";
   useEffect(() => {
     if (!cert) return;
     let alive = true;
     setError(false);
-    renderCertificate(cert, CERTIFICATE_FONTS, scale, verifyUrl(cert.verification_id))
+    renderCertificate(cert, CERTIFICATE_FONTS, scale, verifyUrl(cert.verification_id), designOverride)
       .then((c) => alive && setCanvas(c))
       .catch(() => alive && setError(true));
     return () => {

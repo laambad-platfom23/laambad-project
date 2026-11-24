@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
-import { ChevronLeft, ChevronRight, Loader2, MessagesSquare, RotateCcw, Trophy } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, Lock, MessagesSquare, RotateCcw, Trophy } from "lucide-react";
 import { learningApi } from "@/services/api/student-features";
 import { coursesApi } from "@/services/api/courses";
 import { dashboardApi } from "@/services/api/dashboard";
@@ -17,6 +17,7 @@ import { LessonVideoPlayer } from "@/components/learning/lesson-video-player";
 import { LessonQAPanel } from "@/components/learning/lesson-qa-panel";
 import { SectionQuizzes } from "@/components/learning/section-quizzes";
 import { CourseResources } from "@/components/learning/course-resources";
+import { CourseLiveSessions } from "@/components/learning/course-live-sessions";
 import type { Course, Lesson, Section } from "@/types";
 import { useAuthStore } from "@/store/auth-store";
 import { useAuth } from "@/hooks/use-auth";
@@ -151,6 +152,7 @@ function LearnCoursePageInner() {
         queryClient.invalidateQueries({ queryKey: ["my-certificates"] });
       }
       queryClient.invalidateQueries({ queryKey: ["course-progress", course?.id] });
+      queryClient.invalidateQueries({ queryKey: ["learn-course", slug] });
       queryClient.invalidateQueries({ queryKey: ["course-enrollment-access"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-overview"] });
       const idx = flat.findIndex((x) => x.lesson.id === activeLessonId);
@@ -178,6 +180,7 @@ function LearnCoursePageInner() {
       const { data } = await learningApi.watched(lessonId, percent);
       if (data?.completed) {
         queryClient.invalidateQueries({ queryKey: ["course-progress", course?.id] });
+      queryClient.invalidateQueries({ queryKey: ["learn-course", slug] });
         queryClient.invalidateQueries({ queryKey: ["dashboard-overview"] });
         queryClient.invalidateQueries({ queryKey: ["my-streak"] });
         if (data.certificate_id) {
@@ -203,6 +206,7 @@ function LearnCoursePageInner() {
     onSuccess: () => {
       toast.success("Course restarted — your certificate is kept. Good luck!");
       queryClient.invalidateQueries({ queryKey: ["course-progress", course?.id] });
+      queryClient.invalidateQueries({ queryKey: ["learn-course", slug] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-overview"] });
       if (flat.length) selectLesson(flat[0].lesson.id);
     },
@@ -344,6 +348,9 @@ function LearnCoursePageInner() {
   }
 
   const hasVideo = !!(selected?.lesson.video_url?.trim()) || !!selected?.lesson.has_vdocipher;
+  // A5 sequential courses: the first lesson that is open but not completed yet
+  const firstOpenLessonId =
+    flat.find((x) => !x.lesson.locked && !progressByLesson.get(x.lesson.id)?.completed)?.lesson.id ?? null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -380,14 +387,33 @@ function LearnCoursePageInner() {
             >
               <div className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-px bg-white/20" />
               {/* aspect-video (16:9) — full width of column, ratio preserved (no stretch) */}
-              <LessonVideoPlayer
-                videoProvider={selected?.lesson.video_provider}
-                videoUrl={selected?.lesson.video_url}
-                lessonId={selected?.lesson.id}
-                title={selected?.lesson.title}
-                onWatched={(pct) => handleWatched(selected?.lesson.id, pct)}
-                className="w-full max-w-[min(100%,1600px)] rounded-none shadow-none ring-0 sm:mx-auto"
-              />
+              {selected?.lesson.locked ? (
+                <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 bg-[#0B1F3A] px-6 text-center text-white">
+                  <Lock className="h-10 w-10 text-white/70" aria-hidden />
+                  <p className="text-lg font-semibold">This lesson is locked</p>
+                  <p className="max-w-md text-sm text-white/75">
+                    This course opens lessons in order. Complete the previous lesson to unlock this one.
+                  </p>
+                  {firstOpenLessonId ? (
+                    <Button
+                      type="button"
+                      onClick={() => selectLesson(firstOpenLessonId)}
+                      className="mt-1 bg-brand font-semibold text-white hover:bg-brand-hover"
+                    >
+                      Go to the lesson to complete
+                    </Button>
+                  ) : null}
+                </div>
+              ) : (
+                <LessonVideoPlayer
+                  videoProvider={selected?.lesson.video_provider}
+                  videoUrl={selected?.lesson.video_url}
+                  lessonId={selected?.lesson.id}
+                  title={selected?.lesson.title}
+                  onWatched={(pct) => handleWatched(selected?.lesson.id, pct)}
+                  className="w-full max-w-[min(100%,1600px)] rounded-none shadow-none ring-0 sm:mx-auto"
+                />
+              )}
             </div>
 
             <div className="mt-3 shrink-0">
@@ -414,7 +440,7 @@ function LearnCoursePageInner() {
                 </Button>
                 <Button
                   type="button"
-                  disabled={completeMutation.isPending || !selected?.lesson}
+                  disabled={completeMutation.isPending || !selected?.lesson || !!selected?.lesson.locked}
                   onClick={() => completeMutation.mutate()}
                   className={cn(
                     "rounded-xl gap-1.5 bg-[#0B1F3A] dark:bg-brand dark:hover:bg-brand-hover px-6 text-sm font-bold text-white shadow-lg",
@@ -493,6 +519,8 @@ function LearnCoursePageInner() {
             {selected ? (
               <SectionQuizzes courseId={course.id} sectionId={selected.section.id} sectionTitle={selected.section.title} />
             ) : null}
+
+<CourseLiveSessions courseId={course.id} />
 
             {selected ? <CourseResources courseId={course.id} lessonId={selected.lesson.id} /> : null}
 

@@ -1,3 +1,7 @@
+import * as prerequisites from "./prerequisites";
+import { isUuid } from "@/lib/uuid";
+import { applyLessonAccess, lessonAccess } from "./sequencing";
+import * as review from "./course-review";
 import { prisma, newId, now } from "@/lib/db";
 import type { CoursePricing, Prisma } from "@prisma/client";
 import { fromMinor, toMinor, toMinorOrNull } from "@/server/money";
@@ -176,6 +180,11 @@ export async function mapCourse(
     targetAudience?: string | null;
     materials?: string | null;
     isPublic?: boolean | null;
+    submittedAt?: Date | null;
+    reviewNote?: string | null;
+    reviewedAt?: Date | null;
+    sequentialLessons?: boolean;
+    certificateTemplateId?: string | null;
     createdAt: Date | null;
     updatedAt: Date | null;
     instructor?: { id: string; name: string; email: string; avatarUrl?: string | null } | null;
@@ -245,6 +254,17 @@ export async function mapCourse(
     is_public: course.isPublic ?? undefined,
     status: course.status,
     is_published: course.status === "published",
+    // A5: review + sequencing + certificate design
+    sequential_lessons: course.sequentialLessons ?? false,
+    certificate_template_id: course.certificateTemplateId ?? null,
+    // the reviewer's note is for the instructor: not on public pages
+    ...(opts?.redactLessons
+      ? {}
+      : {
+          review_note: course.reviewNote ?? null,
+          submitted_at: course.submittedAt?.toISOString() ?? null,
+          reviewed_at: course.reviewedAt?.toISOString() ?? null,
+        }),
     ...stats,
     active_pricing: mapPricing(pricing),
     created_at: course.createdAt?.toISOString(),
@@ -402,7 +422,9 @@ export async function publicBySlug(slug: string) {
     mapCourse(course, { includeSections: true, redactLessons: true }),
     courseRating(course.id),
   ]);
-  return { ...withoutInstructorEmail(mapped), rating };
+  // A5: required courses, shown on the course page
+  const required = await prerequisites.listFor(course.id);
+  return { ...withoutInstructorEmail(mapped), rating, prerequisites: required.filter((r) => r.status === "published") };
 }
 
 /** Real rating from the migrated reviews (approved only, as WordPress showed them). */
@@ -457,7 +479,7 @@ export async function listAuth(
   return { data, total, page: Math.max(page, 1) };
 }
 
-export async function getById(courseId: string, redact = false) {
+export async function getById(courseId: string, redact = false, viewer?: AuthUser) {
   const course = await prisma.course.findFirst({
     where: { id: courseId, deletedAt: null },
     include: {
@@ -473,10 +495,12 @@ export async function getById(courseId: string, redact = false) {
     },
   });
   if (!course) throw Err.notFound("course not found");
-  return mapCourse(course, { includeSections: true, redactLessons: redact });
+  const mapped = await mapCourse(course, { includeSections: true, redactLessons: redact });
+  // A5: a viewer only gets the lessons they may open (enrolment + sequential order)
+  return viewer ? applyLessonAccess(mapped, await lessonAccess(viewer, course)) : mapped;
 }
 
-export async function getBySlugAuth(slug: string) {
+export async function getBySlugAuth(slug: string, viewer?: AuthUser) {
   const course = await prisma.course.findFirst({
     where: { slug, deletedAt: null },
     include: {
@@ -492,7 +516,8 @@ export async function getBySlugAuth(slug: string) {
     },
   });
   if (!course) throw Err.notFound("course not found");
-  return mapCourse(course, { includeSections: true, redactLessons: false });
+  const mapped = await mapCourse(course, { includeSections: true, redactLessons: false });
+  return viewer ? applyLessonAccess(mapped, await lessonAccess(viewer, course)) : mapped;
 }
 
 function canManage(user: AuthUser, instructorId: string) {
@@ -543,6 +568,9 @@ export async function update(
     target_audience: string | null;
     materials: string | null;
     is_public: boolean;
+    /** A5 */
+    sequential_lessons: boolean;
+    certificate_template_id: string | null;
   }>
 ) {
   const course = await prisma.course.findFirst({ where: { id: courseId, deletedAt: null } });
@@ -555,6 +583,11 @@ export async function update(
   }
   const opt = (v: string | null | undefined) => (v === undefined ? undefined : v?.trim() ? v : null);
   const LEVELS = ["all_levels", "beginner", "intermediate", "expert"];
+  if (input.certificate_template_id) {
+    if (!isUuid(input.certificate_template_id)) throw Err.invalidInput("invalid certificate template");
+    const tpl = await prisma.certificateTemplate.findFirst({ where: { id: input.certificate_template_id, deletedAt: null }, select: { id: true } });
+    if (!tpl) throw Err.invalidInput("certificate template not found");
+  }
   if (input.level && !LEVELS.includes(input.level)) throw Err.invalidInput("invalid level");
   await prisma.course.update({
     where: { id: courseId },
@@ -570,6 +603,8 @@ export async function update(
       targetAudience: opt(input.target_audience),
       materials: opt(input.materials),
       isPublic: input.is_public === undefined ? undefined : !!input.is_public,
+      sequentialLessons: input.sequential_lessons === undefined ? undefined : !!input.sequential_lessons,
+      certificateTemplateId: input.certificate_template_id === undefined ? undefined : input.certificate_template_id || null,
       updatedAt: now(),
     },
   });
@@ -606,6 +641,8 @@ export async function setStatus(user: AuthUser, courseId: string, status: string
     if (lessons < 1) throw Err.invalidInput("add at least one lesson before publishing");
   }
   await prisma.course.update({ where: { id: courseId }, data: { status, updatedAt: now() } });
+  // A5: an instructor submitted the course for review → remember when + tell the admins
+  if (status === "pending" && user.role !== "admin" && course.status !== "pending") await review.onSubmitted(courseId);
   return getById(courseId);
 }
 
@@ -629,6 +666,7 @@ export async function publish(user: AuthUser, courseId: string) {
     where: { id: courseId },
     data: { status, updatedAt: now() },
   });
+  if (status === "pending_review" && !review.REVIEW_STATUSES.includes(course.status)) await review.onSubmitted(courseId);
   return getById(courseId);
 }
 

@@ -1,3 +1,4 @@
+import * as prerequisites from "./prerequisites";
 import { prisma, newId, now } from "@/lib/db";
 import { ApiError, Err } from "@/lib/api/errors";
 import { isVdoCipherConfigured, requestVdoCipherOtp, VdoCipherNotConfiguredError } from "@/server/vdocipher";
@@ -50,6 +51,7 @@ export async function enroll(
 
   const existing = await findBestEnrollment(user.user_id, courseId);
   if (existing && hasCourseAccess(existing)) throw Err.alreadyEnrolled();
+  await prerequisites.assertMet(user, courseId); // A5
 
   const { amount, currency } = await activePricingAmount(courseId, couponCode);
   if (amount > 0) throw Err.paymentRequired();
@@ -250,7 +252,7 @@ export async function updateLessonProgress(
   if (completed && (!wasCompleted || input.completed === true)) {
     try {
       const cert = await completeCourseAndIssue(user.user_id, lesson.section.courseId);
-      return { course_completed: true, certificate_id: cert?.id ?? null };
+      return { course_completed: true, certificate_id: cert?.id ?? null, completed, completed_percent: pct };
     } catch {
       // not all lessons done yet (or no access to a certificate): nothing to do
     }

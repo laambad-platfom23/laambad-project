@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, Circle, Play } from "lucide-react";
+import { Check, ChevronDown, Circle, Lock, Play } from "lucide-react";
 import type { Course, Lesson, Section } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -213,6 +213,10 @@ export function CourseCurriculumSidebar({
                             <span className="mt-0.5" aria-hidden>
                               {done ? (
                                 <DoneIcon className="h-[22px] w-[22px]" />
+                              ) : lesson.locked ? (
+                                <span className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-[#0B1F3A]/10 text-[#0B1F3A]/60 dark:bg-white/10 dark:text-white/60" title="Complete the previous lesson first">
+                                  <Lock className="h-3 w-3" />
+                                </span>
                               ) : isActive ? (
                                 <span className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-brand text-white">
                                   <Play className="ml-0.5 h-3 w-3 fill-current" />

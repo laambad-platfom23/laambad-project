@@ -12,6 +12,60 @@ export const CERT_H = 880;
 
 export type CertificateFonts = { script: string; body: string; mono: string };
 
+/**
+ * A5 certificate builder: everything a template may change. Missing values fall back to the
+ * Laambad default (the old Tutor template), so a certificate without a template looks as before.
+ */
+export type CertificateDesign = {
+  background: string;
+  ribbon: string;
+  frame: string;
+  accent: string; // line under the signature
+  heading: string; // ribbon text
+  name_color: string;
+  text_color: string;
+  completed_text: string;
+  body_text: string;
+  partner_logo_url: string; // ribbon logo
+  brand_logo_url: string; // top logo
+  signature_url: string;
+  signer_name: string;
+  signer_title: string;
+  show_qr: boolean;
+  show_duration: boolean;
+  show_pattern: boolean;
+};
+
+export const DEFAULT_CERTIFICATE_DESIGN: CertificateDesign = {
+  background: "#f7f7fb",
+  ribbon: "#e9eaf7",
+  frame: "#e6e6f0",
+  accent: "#1e1b4b",
+  heading: "VERIFIED\nCERTIFICATE",
+  name_color: "#141325",
+  text_color: "#555557",
+  completed_text: "Has Successfully Completed",
+  body_text:
+    "an online non-Credit Course Authorized by Benaadir Research, Consultancy and Evaluation center, Offered through Laambad E-Learning Platform.",
+  partner_logo_url: "/certificates/benaadir-logo.png",
+  brand_logo_url: "/certificates/laambad-logo.png",
+  signature_url: "/certificates/director-signature.png",
+  signer_name: "Abdinor Abukar Ahmed",
+  signer_title: "Director",
+  show_qr: true,
+  show_duration: true,
+  show_pattern: true,
+};
+
+export function resolveDesign(d?: Partial<CertificateDesign> | null): CertificateDesign {
+  const out = { ...DEFAULT_CERTIFICATE_DESIGN };
+  for (const [k, v] of Object.entries(d ?? {})) {
+    if (v === undefined || v === null || v === "") continue;
+    (out as Record<string, unknown>)[k] = v;
+  }
+  return out;
+}
+
 const ARIAL = "Arial, Helvetica, sans-serif";
 
 function longDate(iso?: string) {
@@ -22,6 +76,8 @@ function longDate(iso?: string) {
 function loadImage(src: string): Promise<HTMLImageElement | null> {
   return new Promise((resolve) => {
     const img = new Image();
+    // uploaded logos come from the CDN: ask for CORS so the canvas can still be exported
+    if (/^https?:/i.test(src)) img.crossOrigin = "anonymous";
     img.onload = () => resolve(img);
     img.onerror = () => resolve(null);
     img.src = src;
@@ -102,15 +158,17 @@ export async function renderCertificate(
   fonts: CertificateFonts,
   scale = 2,
   verifyUrl: string,
+  designIn?: Partial<CertificateDesign> | null,
 ): Promise<HTMLCanvasElement> {
+  const design = resolveDesign(designIn ?? cert.design);
   const families = [fonts.script, fonts.body, fonts.mono];
   await Promise.all(families.map((f) => document.fonts.load(`40px ${f}`).catch(() => undefined)));
   await document.fonts.ready;
 
   const [benaadir, laambad, signature] = await Promise.all([
-    loadImage("/certificates/benaadir-logo.png"),
-    loadImage("/certificates/laambad-logo.png"),
-    loadImage("/certificates/director-signature.png"),
+    loadImage(design.partner_logo_url),
+    loadImage(design.brand_logo_url),
+    loadImage(design.signature_url),
   ]);
 
   const canvas = document.createElement("canvas");
@@ -121,9 +179,10 @@ export async function renderCertificate(
   ctx.imageSmoothingQuality = "high";
 
   // background + subtle diagonal pattern
-  ctx.fillStyle = "#f7f7fb";
+  ctx.fillStyle = design.background;
   ctx.fillRect(0, 0, CERT_W, CERT_H);
   ctx.save();
+  if (design.show_pattern) {
   ctx.strokeStyle = "rgba(30,27,75,0.035)";
   ctx.lineWidth = 2;
   for (let d = -CERT_H; d < CERT_W; d += 22) {
@@ -137,15 +196,16 @@ export async function renderCertificate(
   glow.addColorStop(1, "rgba(99,102,241,0)");
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, CERT_W, CERT_H);
+  }
   ctx.restore();
 
   // inner frame
-  ctx.strokeStyle = "#e6e6f0";
+  ctx.strokeStyle = design.frame;
   ctx.lineWidth = 1;
   ctx.strokeRect(20.5, 20.5, CERT_W - 41, CERT_H - 41);
 
   // left ribbon
-  ctx.fillStyle = "#e9eaf7";
+  ctx.fillStyle = design.ribbon;
   ctx.beginPath();
   ctx.moveTo(70, 0);
   ctx.lineTo(306, 0);
@@ -155,12 +215,13 @@ export async function renderCertificate(
   ctx.closePath();
   ctx.fill();
 
-  textBox(ctx, "VERIFIED\nCERTIFICATE", 124, 119, 133, { font: ARIAL, size: 18, color: "#6e7587", align: "center", letterSpacing: 0.5 });
+  textBox(ctx, design.heading.replace(/\\n/g, "\n"), 124, 119, 133, { font: ARIAL, size: 18, color: "#6e7587", align: "center", letterSpacing: 0.5 });
   drawContain(ctx, benaadir, 65, 216, 243, 253);
   textBox(ctx, cert.verification_id, 88, 498, 240, { font: fonts.mono, size: 16, color: "#000", letterSpacing: 0.3 });
   drawContain(ctx, laambad, 363, 28, 300, 108);
 
   // QR (quiet zone 2 modules, white background)
+  if (design.show_qr) {
   const qr = encodeQr(verifyUrl);
   const n = qr.length + 4;
   const cell = 72 / n;
@@ -172,34 +233,35 @@ export async function renderCertificate(
       if (dark) ctx.fillRect(1028 + (x + 2) * cell, 38 + (y + 2) * cell, cell + 0.02, cell + 0.02);
     }),
   );
+  }
 
   const name = cert.student_name || cert.user?.name || "";
   const course = cert.course_title || cert.course?.title || "";
-  const nameOpts: TextOpts = { font: fonts.script, size: 50, color: "#141325", maxLines: 1 };
+  const nameOpts: TextOpts = { font: fonts.script, size: 50, color: design.name_color, maxLines: 1 };
   textBox(ctx, name, 343, 217, 757, { ...nameOpts, size: fitSize(ctx, name, 757, nameOpts, 30) });
-  textBox(ctx, "Has Successfully Completed", 350, 327, 521, { font: ARIAL, size: 16, letterSpacing: 1 });
-  const courseOpts: TextOpts = { font: fonts.script, size: 36, maxLines: 2 };
+  textBox(ctx, design.completed_text, 350, 327, 521, { font: ARIAL, size: 16, letterSpacing: 1 });
+  const courseOpts: TextOpts = { font: fonts.script, size: 36, color: design.name_color, maxLines: 2 };
   textBox(ctx, course, 350, 370, 706, { ...courseOpts, size: fitSize(ctx, course, 706, courseOpts, 24) });
   textBox(
     ctx,
-    "an online non-Credit Course Authorized by Benaadir Research, Consultancy and Evaluation center, Offered through Laambad E-Learning Platform.",
+    design.body_text,
     356,
     479,
     475,
-    { font: fonts.body, size: 18, color: "#555557", lineHeight: 1.5 },
+    { font: fonts.body, size: 18, color: design.text_color, lineHeight: 1.5, maxLines: 6 },
   );
 
   textBox(ctx, "Course completed on", 386, 723, 206, { font: ARIAL, size: 18, color: "#312627" });
   textBox(ctx, longDate(cert.completed_at || cert.issued_at), 593, 724, 260, { font: ARIAL, size: 18, weight: 600 });
-  if (cert.duration) {
+  if (cert.duration && design.show_duration) {
     textBox(ctx, "Course Duration", 386, 757, 174, { font: ARIAL, size: 18, color: "#312627" });
     textBox(ctx, cert.duration, 540, 758, 280, { font: ARIAL, size: 18, weight: 500 });
   }
 
   drawContain(ctx, signature, 838, 636, 234, 133);
-  textBox(ctx, "Abdinor Abukar Ahmed", 820, 724, 257, { font: ARIAL, size: 18, color: "#312627", align: "center" });
-  textBox(ctx, "Director", 884, 761, 135, { font: ARIAL, size: 13, color: "#312627", align: "center" });
-  ctx.fillStyle = "#1e1b4b";
+  textBox(ctx, design.signer_name, 790, 724, 317, { font: ARIAL, size: 18, color: "#312627", align: "center", maxLines: 1 });
+  textBox(ctx, design.signer_title, 820, 761, 257, { font: ARIAL, size: 13, color: "#312627", align: "center", maxLines: 1 });
+  ctx.fillStyle = design.accent;
   ctx.beginPath();
   ctx.roundRect?.(837, 808, 244, 4, 2);
   if (!ctx.roundRect) ctx.rect(837, 808, 244, 4);

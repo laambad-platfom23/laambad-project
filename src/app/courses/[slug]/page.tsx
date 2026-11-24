@@ -810,10 +810,27 @@ export default function PublicCourseDetailPage() {
               >
                 <SidebarCover description={course.description} coverUrl={course.cover_image_url} />
                 <div className="border-b border-[#0B1F3A]/[0.08] bg-[#f5f8fd]/90 px-3 py-2 dark:border-border dark:bg-[#061528]/80">
-                  <p className="text-[11px] leading-snug text-gray-700 dark:text-white/80">
-                    <span className="font-semibold text-[#0B1F3A] dark:text-[#FF8A66]">Subscribe &amp; save</span>
-                    <span className="text-gray-500 dark:text-white/60"> — Membership bundles coming soon.</span>
-                  </p>
+                  {course.prerequisites?.length ? (
+                    <p className="text-[11px] leading-snug text-gray-700 dark:text-white/80">
+                      <span className="font-semibold text-[#0B1F3A] dark:text-[#FF8A66]">Finish first: </span>
+                      {course.prerequisites.map((p, i) => (
+                        <span key={p.id}>
+                          {i ? ", " : ""}
+                          <Link href={`/courses/${encodeURIComponent(p.slug)}`} className="underline underline-offset-2">
+                            {p.title}
+                          </Link>
+                        </span>
+                      ))}
+                    </p>
+                  ) : (
+                    <p className="text-[11px] leading-snug text-gray-700 dark:text-white/80">
+                      <span className="font-semibold text-[#0B1F3A] dark:text-[#FF8A66]">Diplomas</span>
+                      <span className="text-gray-500 dark:text-white/60"> — save by taking several courses together. </span>
+                      <Link href="/dashboard/bundles" className="font-semibold underline underline-offset-2">
+                        See diplomas
+                      </Link>
+                    </p>
+                  )}
                 </div>
                 <div className="border-b border-[#0B1F3A]/[0.08] bg-white/90 px-4 py-4 dark:border-border dark:bg-white/5">
                   <PurchasePlanPanel course={course} isFree={isFree} guest={!user} />

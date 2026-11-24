@@ -14,6 +14,7 @@ import { Err } from "@/lib/api/errors";
 import type { AuthUser } from "@/lib/auth/request";
 import { findBestEnrollment, hasCourseAccess } from "@/server/enrollment-status";
 import { assertUuid } from "@/lib/uuid";
+import { downloadLink } from "@/server/s3";
 
 type LegacyFile = { id: string; name: string; mime: string; size: number | null; url: string; course_id: string };
 type LegacyData = { courses: Record<string, LegacyFile[]>; lessons: Record<string, LegacyFile[]> };
@@ -83,5 +84,7 @@ export async function resourceLink(user: AuthUser, id: string) {
   const f = index().get(id);
   if (!f) throw Err.notFound("file not found");
   await requireAccess(user, f.course_id);
-  return { name: f.name, url: f.url };
+  // A5: signed S3 link (expires in 5 minutes) once the S3 keys are configured
+  const link = await downloadLink(f.url, f.name);
+  return { name: f.name, ...link };
 }

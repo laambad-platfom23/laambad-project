@@ -19,6 +19,12 @@ import * as quizzes from "@/server/services/quizzes";
 import * as quizTaking from "@/server/services/quiz-taking";
 import * as reminders from "@/server/services/reminders";
 import * as resources from "@/server/services/resources";
+import * as courseReview from "@/server/services/course-review";
+import * as sequencing from "@/server/services/sequencing";
+import * as prerequisites from "@/server/services/prerequisites";
+import * as certTemplates from "@/server/services/certificate-templates";
+import * as bundles from "@/server/services/bundles";
+import * as liveSessions from "@/server/services/live-sessions";
 import { checkUnsubscribeToken } from "@/server/notify";
 import { isUuid } from "@/lib/uuid";
 import { prisma } from "@/lib/db";
@@ -177,6 +183,31 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
       const user = await optionalAuth(req);
       const slug = decodeURIComponent(path.split("/")[1]);
       return user ? json(await books.getBook(user, slug)) : publicJson(await books.getBook(null, slug), 300);
+    }
+
+    // ── A5: bundles (public list; owned flags when signed in) ──
+    if (path === "bundles" && method === "GET") {
+      const user = await optionalAuth(req);
+      return user ? json(await bundles.listBundles(user)) : publicJson(await bundles.listBundles(null), 300);
+    }
+    if (path.match(/^bundles\/[^/]+$/) && method === "GET") {
+      const user = await optionalAuth(req);
+      const slug = decodeURIComponent(path.split("/")[1]);
+      return user ? json(await bundles.getBundle(user, slug)) : publicJson(await bundles.getBundle(null, slug), 300);
+    }
+    // ── A5: Google OAuth callback (redirect back to the live-sessions page) ──
+    if (path === "google/oauth/callback" && method === "GET") {
+      const code = url.searchParams.get("code");
+      const state = url.searchParams.get("state") ?? "";
+      let result = "connected";
+      try {
+        if (!code) throw new Error(url.searchParams.get("error") ?? "no code");
+        await liveSessions.googleCallback(code, state);
+      } catch (e) {
+        console.error("[google] connect failed:", (e as Error)?.message);
+        result = "failed";
+      }
+      return Response.redirect(new URL(`/dashboard/live-sessions?google=${result}`, req.url), 302);
     }
 
     // ── A4: daily learning reminders (Vercel Cron sends "Authorization: Bearer <CRON_SECRET>") ──
@@ -481,9 +512,9 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
       return json(await courses.create(user, body), 201);
     }
     if (v1.match(/^courses\/slug\/[^/]+$/) && method === "GET") {
-      await requireAuth(req);
+      const user = await requireAuth(req);
       const slug = decodeURIComponent(v1.slice("courses/slug/".length));
-      return json(await courses.getBySlugAuth(slug));
+      return json(await courses.getBySlugAuth(slug, user));
     }
     if (v1.match(/^courses\/[^/]+\/enroll$/) && method === "POST") {
       const user = await requireAuth(req);
@@ -542,11 +573,126 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
     }
     if (v1.match(/^courses\/[^/]+\/approve$/) && method === "POST") {
       const user = await requireAuth(req);
-      return json(await courses.approve(user, v1.split("/")[1]));
+      const body = await readJson<{ note?: string }>(req).catch(() => ({}) as { note?: string });
+      return json(await courseReview.approveCourse(user, v1.split("/")[1], body?.note));
     }
     if (v1.match(/^courses\/[^/]+\/reject$/) && method === "POST") {
       const user = await requireAuth(req);
-      return json(await courses.reject(user, v1.split("/")[1]));
+      const body = await readJson<{ note?: string }>(req).catch(() => ({}) as { note?: string });
+      return json(await courseReview.rejectCourse(user, v1.split("/")[1], body?.note));
+    }
+    // ── A5: bundles (buy / admin) ──
+    if (v1.match(/^bundles\/[^/]+\/enroll$/) && method === "POST") {
+      const user = await requireAuth(req);
+      await auth.requireVerifiedEmail(user);
+      return json(await bundles.enrollFree(user, v1.split("/")[1]), 201);
+    }
+    if (v1.match(/^bundles\/[^/]+\/pay\/waafi$/) && method === "POST") {
+      const user = await requireAuth(req);
+      await auth.requireVerifiedEmail(user);
+      const body = await readJson<{ phone?: string }>(req);
+      return json(await bundles.payWithWaafi(user, v1.split("/")[1], body ?? {}));
+    }
+    if (v1.match(/^bundles\/[^/]+\/pay\/manual$/) && method === "POST") {
+      const user = await requireAuth(req);
+      await auth.requireVerifiedEmail(user);
+      const body = await readJson<{ sender_phone?: string; reference?: string }>(req);
+      return json(await bundles.requestManual(user, v1.split("/")[1], body ?? {}), 201);
+    }
+    if (v1 === "admin/bundles" && method === "POST") {
+      const user = await requireAuth(req);
+      return json(await bundles.saveBundle(user, null, await readJson(req)), 201);
+    }
+    if (v1.match(/^admin\/bundles\/[^/]+$/) && method === "PATCH") {
+      const user = await requireAuth(req);
+      return json(await bundles.saveBundle(user, v1.split("/")[2], await readJson(req)));
+    }
+    if (v1.match(/^admin\/bundles\/[^/]+$/) && method === "DELETE") {
+      const user = await requireAuth(req);
+      return json(await bundles.deleteBundle(user, v1.split("/")[2]));
+    }
+    if (v1 === "admin/bundle-orders" && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await bundles.adminOrders(user, url.searchParams.get("status")));
+    }
+    if (v1.match(/^admin\/bundle-orders\/[^/]+\/(approve|reject)$/) && method === "POST") {
+      const user = await requireAuth(req);
+      const [, , id, action] = v1.split("/");
+      const body = await readJson<{ reference?: string; reason?: string }>(req).catch(() => ({}) as { reference?: string; reason?: string });
+      return json(await bundles.adminDecide(user, id, action === "approve", action === "approve" ? body?.reference : body?.reason));
+    }
+
+    // ── A5: live sessions (Google Meet) ──
+    if (v1 === "live-sessions" && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await liveSessions.myUpcoming(user));
+    }
+    if (v1.match(/^courses\/[^/]+\/live-sessions$/) && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await liveSessions.listForCourse(user, v1.split("/")[1]));
+    }
+    if (v1.match(/^courses\/[^/]+\/live-sessions$/) && method === "POST") {
+      const user = await requireAuth(req);
+      return json(await liveSessions.create(user, v1.split("/")[1], await readJson(req)), 201);
+    }
+    if (v1.match(/^live-sessions\/[^/]+$/) && method === "PATCH") {
+      const user = await requireAuth(req);
+      return json(await liveSessions.update(user, v1.split("/")[1], await readJson(req)));
+    }
+    if (v1.match(/^live-sessions\/[^/]+$/) && method === "DELETE") {
+      const user = await requireAuth(req);
+      return json(await liveSessions.cancel(user, v1.split("/")[1]));
+    }
+    if (v1 === "google/status" && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await liveSessions.googleStatus(user));
+    }
+    if (v1 === "google/connect" && method === "POST") {
+      const user = await requireAuth(req);
+      return json(liveSessions.googleConnectUrl(user));
+    }
+    if (v1 === "google/connection" && method === "DELETE") {
+      const user = await requireAuth(req);
+      return json(await liveSessions.googleDisconnect(user));
+    }
+
+    // ── A5: certificate builder ──
+    if (v1 === "certificate-templates" && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await certTemplates.list(user));
+    }
+    if (v1 === "certificate-templates" && method === "POST") {
+      const user = await requireAuth(req);
+      return json(await certTemplates.create(user, await readJson(req)), 201);
+    }
+    if (v1.match(/^certificate-templates\/[^/]+$/) && method === "PATCH") {
+      const user = await requireAuth(req);
+      return json(await certTemplates.update(user, v1.split("/")[1], await readJson(req)));
+    }
+    if (v1.match(/^certificate-templates\/[^/]+$/) && method === "DELETE") {
+      const user = await requireAuth(req);
+      return json(await certTemplates.remove(user, v1.split("/")[1]));
+    }
+    // ── A5: prerequisites ──
+    if (v1.match(/^courses\/[^/]+\/prerequisites$/) && method === "GET") {
+      const user = await requireAuth(req);
+      const id = v1.split("/")[1];
+      if (!isUuid(id)) throw Err.notFound("course not found");
+      return json({ data: await prerequisites.listFor(id), missing: await prerequisites.missingFor(user.user_id, id) });
+    }
+    if (v1.match(/^courses\/[^/]+\/prerequisites$/) && method === "PUT") {
+      const user = await requireAuth(req);
+      const body = await readJson<{ course_ids?: unknown }>(req);
+      return json({ data: await prerequisites.setFor(user, v1.split("/")[1], body?.course_ids ?? []) });
+    }
+    if (v1 === "admin/course-reviews" && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await courseReview.queue(user));
+    }
+    if (v1 === "admin/course-reviews/count" && method === "GET") {
+      const user = await requireAuth(req);
+      requireRole(user, "admin");
+      return json(await courseReview.pendingCount());
     }
     if (v1.match(/^courses\/[^/]+\/sections$/) && method === "POST") {
       const user = await requireAuth(req);
@@ -607,8 +753,8 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
       return json(await misc.reviewStats(v1.split("/")[1]));
     }
     if (v1.match(/^courses\/[^/]+$/) && method === "GET") {
-      await requireAuth(req);
-      return json(await courses.getById(v1.split("/")[1]));
+      const user = await requireAuth(req);
+      return json(await courses.getById(v1.split("/")[1], false, user));
     }
     if (v1.match(/^courses\/[^/]+$/) && method === "PATCH") {
       const user = await requireAuth(req);
@@ -656,6 +802,7 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
     if (v1.match(/^lessons\/[^/]+\/progress$/) && method === "PATCH") {
       const user = await requireAuth(req);
       const body = await readJson<{ completed?: boolean; completed_percent?: number; watched_percent?: number }>(req);
+      if (isUuid(v1.split("/")[1])) await sequencing.assertLessonOpen(user, v1.split("/")[1]); // A5: in order
       return json(await enrollments.updateLessonProgress(user, v1.split("/")[1], body));
     }
     if (v1.match(/^lessons\/[^/]+\/vdocipher$/) && method === "GET") {
@@ -669,6 +816,7 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
         host = undefined;
       }
       await auth.requireVerifiedEmail(user);
+      if (isUuid(v1.split("/")[1])) await sequencing.assertLessonOpen(user, v1.split("/")[1]); // A5: in order
       return json(await enrollments.vdocipherPlayback(user, v1.split("/")[1], host));
     }
     if (v1.match(/^lessons\/[^/]+\/questions$/) && method === "POST") {
