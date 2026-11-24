@@ -29,6 +29,9 @@ model User {
   mustResetPassword   Boolean   @default(false) @map("must_reset_password")
   /// A1 (prisma/app-sql/A1-email-verification.sql): null = e-mail not verified yet
   emailVerifiedAt     DateTime? @map("email_verified_at") @db.Timestamptz()
+  /// A2: WhatsApp reminders only with consent (null = no consent)
+  whatsappPhone       String?   @map("whatsapp_phone") @db.VarChar(30)
+  whatsappConsentAt   DateTime? @map("whatsapp_consent_at") @db.Timestamptz()
 
   role               Role                 @relation(fields: [roleId], references: [id])
   legacyRoles        UserLegacyRole[]
@@ -53,6 +56,10 @@ model User {
   gradedSubmissions  Submission[]         @relation("GradedBy")
   auditLogs          AuditLog[]
   emailCodes         EmailCode[]
+  passkeys           UserPasskey[]
+  learningDays       LearningDay[]
+  discussionMessages CourseDiscussionMessage[]
+  bookOrders         BookOrder[]
 
   @@index([passwordScheme])
   @@map("users")
@@ -192,6 +199,8 @@ model Course {
   orderItems   OrderItem[]
   earnings     InstructorEarning[]
   questions    LessonQuestion[]
+  discussionMessages CourseDiscussionMessage[]
+  pathLinks    LearningPathCourse[]
 
   @@index([instructorId, status])
   @@index([legacyProductId])
@@ -280,6 +289,9 @@ model Enrollment {
   legacyWpId      BigInt?   @unique @map("legacy_wp_id")
   legacyOrderId   BigInt?   @map("legacy_order_id")
   legacyProductId BigInt?   @map("legacy_product_id")
+  /// A2: course retake (progress reset by UPDATE; the certificate stays)
+  retakeCount     Int       @default(0) @map("retake_count")
+  lastRetakeAt    DateTime? @map("last_retake_at") @db.Timestamptz()
 
   user     User             @relation(fields: [userId], references: [id])
   course   Course           @relation(fields: [courseId], references: [id])
@@ -852,4 +864,153 @@ model EmailCode {
 
   @@index([userId, purpose, createdAt(sort: Desc)], map: "email_codes_user_purpose_created_idx")
   @@map("email_codes")
+}
+
+// ───────────── A2 (prisma/app-sql/A2-student-features.sql) ─────────────
+
+/// Streak: one row per user per learning day (Africa/Mogadishu calendar day).
+model LearningDay {
+  userId        String   @map("user_id") @db.Uuid
+  day           DateTime @db.Date
+  activityCount Int      @default(1) @map("activity_count")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, day])
+  @@map("learning_days")
+}
+
+/// Group discussion: one room per course.
+model CourseDiscussionMessage {
+  id        String    @id @db.Uuid
+  courseId  String    @map("course_id") @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  parentId  String?   @map("parent_id") @db.Uuid
+  body      String    @db.Text
+  isPinned  Boolean   @default(false) @map("is_pinned")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime  @default(now()) @map("updated_at") @db.Timestamptz()
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz()
+
+  course  Course                    @relation(fields: [courseId], references: [id])
+  user    User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent  CourseDiscussionMessage?  @relation("DiscussionReplies", fields: [parentId], references: [id])
+  replies CourseDiscussionMessage[] @relation("DiscussionReplies")
+
+  @@index([courseId, createdAt(sort: Desc)], map: "course_discussion_course_created_idx")
+  @@map("course_discussion_messages")
+}
+
+/// Learning path: an ordered list of courses.
+model LearningPath {
+  id          String    @id @db.Uuid
+  title       String    @db.VarChar(255)
+  slug        String    @unique @db.VarChar(220)
+  description String?   @db.Text
+  coverUrl    String?   @map("cover_url") @db.VarChar(1024)
+  level       String?   @db.VarChar(32)
+  status      String    @default("draft") @db.VarChar(16)
+  sortOrder   Int       @default(0) @map("sort_order")
+  createdBy   String?   @map("created_by") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime  @default(now()) @map("updated_at") @db.Timestamptz()
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz()
+
+  courses LearningPathCourse[]
+
+  @@map("learning_paths")
+}
+
+model LearningPathCourse {
+  pathId    String @map("path_id") @db.Uuid
+  courseId  String @map("course_id") @db.Uuid
+  sortOrder Int    @default(0) @map("sort_order")
+
+  path   LearningPath @relation(fields: [pathId], references: [id], onDelete: Cascade)
+  course Course       @relation(fields: [courseId], references: [id])
+
+  @@id([pathId, courseId])
+  @@map("learning_path_courses")
+}
+
+/// Passkey (WebAuthn credential).
+model UserPasskey {
+  id           String    @id @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  credentialId String    @unique @map("credential_id") @db.VarChar(512)
+  publicKey    Bytes     @map("public_key")
+  counter      BigInt    @default(0)
+  transports   String?   @db.VarChar(255)
+  deviceType   String?   @map("device_type") @db.VarChar(32)
+  backedUp     Boolean   @default(false) @map("backed_up")
+  name         String?   @db.VarChar(100)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  lastUsedAt   DateTime? @map("last_used_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "user_passkeys_user_idx")
+  @@map("user_passkeys")
+}
+
+model WebauthnChallenge {
+  id         String    @id @db.Uuid
+  userId     String?   @map("user_id") @db.Uuid
+  purpose    String    @db.VarChar(16)
+  challenge  String    @db.VarChar(255)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz()
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz()
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@map("webauthn_challenges")
+}
+
+/// Book (PDF). file_url is server-only: it is never sent to the browser.
+model Book {
+  id          String    @id @db.Uuid
+  title       String    @db.VarChar(255)
+  slug        String    @unique @db.VarChar(220)
+  author      String?   @db.VarChar(255)
+  description String?   @db.Text
+  coverUrl    String?   @map("cover_url") @db.VarChar(1024)
+  fileUrl     String?   @map("file_url") @db.VarChar(1024)
+  fileName    String?   @map("file_name") @db.VarChar(255)
+  fileSize    BigInt?   @map("file_size")
+  isFree      Boolean   @default(true) @map("is_free")
+  price       Decimal   @default(0) @db.Decimal(16, 2)
+  currency    String    @default("USD") @db.VarChar(8)
+  status      String    @default("draft") @db.VarChar(16)
+  createdBy   String?   @map("created_by") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime  @default(now()) @map("updated_at") @db.Timestamptz()
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz()
+
+  orders BookOrder[]
+
+  @@map("books")
+}
+
+model BookOrder {
+  id            String    @id @db.Uuid
+  bookId        String    @map("book_id") @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  amount        Decimal   @default(0) @db.Decimal(16, 2)
+  currency      String    @default("USD") @db.VarChar(8)
+  status        String    @default("pending") @db.VarChar(16)
+  provider      String    @db.VarChar(16)
+  providerRefId String?   @map("provider_ref_id") @db.VarChar(255)
+  transactionId String?   @map("transaction_id") @db.VarChar(255)
+  note          String?   @db.Text
+  paidAt        DateTime? @map("paid_at") @db.Timestamptz()
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt     DateTime  @default(now()) @map("updated_at") @db.Timestamptz()
+
+  book Book @relation(fields: [bookId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, bookId], map: "book_orders_user_book_idx")
+  @@index([status, createdAt(sort: Desc)], map: "book_orders_status_idx")
+  @@map("book_orders")
 }

@@ -9,6 +9,10 @@ import { withLegacyPrice } from "@/server/legacy-prices";
 import { fromMinor, toMinor } from "@/server/money";
 import { decodeHtmlEntities } from "@/lib/html-entities";
 import { completeCourseAndIssue } from "./misc";
+import { recordLearningActivity } from "./learning";
+
+/** A2: a lesson completes automatically once this share of its video has been watched. */
+export const AUTO_COMPLETE_PERCENT = 80;
 import {
   ACCESS_STATUSES,
   apiEnrollmentStatus,
@@ -166,10 +170,10 @@ export async function getProgress(user: AuthUser, courseId: string) {
 export async function updateLessonProgress(
   user: AuthUser,
   lessonId: string,
-  input: { completed?: boolean; completed_percent?: number }
+  input: { completed?: boolean; completed_percent?: number; watched_percent?: number }
 ) {
-  if (input.completed === undefined && input.completed_percent === undefined) {
-    throw Err.invalidInput("completed or completed_percent required");
+  if (input.completed === undefined && input.completed_percent === undefined && input.watched_percent === undefined) {
+    throw Err.invalidInput("completed, completed_percent or watched_percent required");
   }
   const lesson = await prisma.lesson.findFirst({
     where: { id: lessonId, deletedAt: null },
@@ -183,17 +187,29 @@ export async function updateLessonProgress(
     throw Err.forbidden();
   }
 
-  let completed = input.completed;
-  let pct = input.completed_percent;
-  if (completed === true) pct = 100;
-  if (completed === false) pct = 0;
-  if (pct === undefined) pct = completed ? 100 : 0;
-  completed = pct >= 100;
-
   // G7: one progress row per (user, lesson) — unique in the approved schema.
   const existing = await prisma.lessonProgress.findUnique({
     where: { userId_lessonId: { userId: user.user_id, lessonId } },
   });
+  const wasCompleted = !!existing?.completed && !existing.deletedAt;
+
+  let completed = input.completed;
+  let pct = input.completed_percent;
+  if (input.watched_percent !== undefined && input.completed === undefined && input.completed_percent === undefined) {
+    // A2 automatic progress from the video player: never lowers progress, never un-completes,
+    // and the lesson is completed once 80 % of the video has really been watched.
+    const watched = Number(input.watched_percent);
+    if (!Number.isFinite(watched)) throw Err.invalidInput("watched_percent must be a number");
+    const before = existing && !existing.deletedAt ? Number(existing.completedPercent) : 0;
+    pct = Math.max(before, Math.max(0, Math.min(100, Math.floor(watched))));
+    completed = wasCompleted || pct >= AUTO_COMPLETE_PERCENT;
+    if (completed) pct = 100;
+  } else {
+    if (completed === true) pct = 100;
+    if (completed === false) pct = 0;
+    if (pct === undefined) pct = completed ? 100 : 0;
+    completed = pct >= 100;
+  }
   const t = now();
   if (existing) {
     await prisma.lessonProgress.update({
@@ -203,7 +219,8 @@ export async function updateLessonProgress(
         enrollmentId: existing.enrollmentId ?? enrollment.id,
         completed,
         completedPercent: BigInt(Math.max(0, Math.min(100, Math.floor(pct)))),
-        completedAt: completed ? t : null,
+        // keep the first completion time when the lesson was already done
+        completedAt: completed ? (wasCompleted && existing.completedAt ? existing.completedAt : t) : null,
         updatedAt: t,
       },
     });
@@ -223,8 +240,12 @@ export async function updateLessonProgress(
     });
   }
 
+  // A2 streak: any saved progress counts as learning today.
+  await recordLearningActivity(user.user_id, t);
+
   // Last lesson done → complete the course and issue the certificate automatically.
-  if (completed) {
+  // (an explicit "complete" press always re-checks, so a finished course without a certificate still gets one)
+  if (completed && (!wasCompleted || input.completed === true)) {
     try {
       const cert = await completeCourseAndIssue(user.user_id, lesson.section.courseId);
       return { course_completed: true, certificate_id: cert?.id ?? null };
@@ -232,7 +253,7 @@ export async function updateLessonProgress(
       // not all lessons done yet (or no access to a certificate): nothing to do
     }
   }
-  return { course_completed: false, certificate_id: null };
+  return { course_completed: false, certificate_id: null, completed, completed_percent: pct };
 }
 
 /**

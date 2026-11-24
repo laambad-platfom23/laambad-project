@@ -215,6 +215,17 @@ export async function login(input: {
   return issueTokens(full, input.ip, input.userAgent);
 }
 
+/**
+ * A2 passkey login: the caller (services/passkeys.ts) has already verified the WebAuthn assertion.
+ * Same session/token issuing as a password login; disabled accounts are refused.
+ */
+export async function loginVerifiedUser(userId: string, ip: string, userAgent: string) {
+  const full = await findUserWithRole(userId);
+  if (!full) throw Err.invalidCredentials();
+  if (!full.isActive) throw Err.accountDisabled();
+  return issueTokens(full, ip, userAgent);
+}
+
 export async function refresh(refreshToken: string, ip: string, userAgent: string) {
   let parsed: { userId: string; jti: string };
   try {

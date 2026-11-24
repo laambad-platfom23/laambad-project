@@ -9,6 +9,7 @@
 
 # next.js
 /.next/
+/.next-*/
 /out/
 
 # production
@@ -47,3 +48,6 @@ secrets/
 /scripts/test-vectors/
 
 .env*
+
+# A2: book PDFs in local dev (never public)
+/.private-uploads/

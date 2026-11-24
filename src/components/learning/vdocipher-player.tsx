@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Loader2, VideoOff } from "lucide-react";
 import apiClient from "@/services/api/client";
 import { cn } from "@/lib/utils";
+import { WatchTracker } from "@/components/learning/watch-tracker";
 
 type Playback = { provider: "vdocipher"; otp: string; playback_info: string };
 
@@ -19,15 +20,20 @@ export function VdoCipherPlayer({
   title,
   className,
   onEnded,
+  onWatched,
 }: {
   lessonId: string;
   title?: string;
   className?: string;
   onEnded?: () => void;
+  /** A2: share of the video really played (0–100), reported every 10 % and at 80 % */
+  onWatched?: (percent: number) => void;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const onEndedRef = useRef(onEnded);
   onEndedRef.current = onEnded;
+  const onWatchedRef = useRef(onWatched);
+  onWatchedRef.current = onWatched;
   const q = useQuery({
     queryKey: ["vdocipher-otp", lessonId],
     queryFn: () => apiClient.get<Playback>(`/api/v1/lessons/${lessonId}/vdocipher`).then((r) => r.data),
@@ -38,7 +44,12 @@ export function VdoCipherPlayer({
     refetchOnWindowFocus: false,
   });
 
-  useVdoEnded(iframeRef, q.data?.otp, () => onEndedRef.current?.());
+  useVdoEnded(
+    iframeRef,
+    q.data?.otp,
+    () => onEndedRef.current?.(),
+    (p) => onWatchedRef.current?.(p)
+  );
 
   const shell = cn("relative flex aspect-video w-full items-center justify-center bg-black text-center", className);
 
@@ -113,21 +124,32 @@ function loadVdoApi(): Promise<VdoPlayerStatic | null> {
   return apiPromise;
 }
 
-/** Calls `cb` once per view when the video ends (or 97 % has been watched, in case "ended" is missed). */
-function useVdoEnded(ref: React.RefObject<HTMLIFrameElement | null>, otp: string | undefined, cb: () => void) {
+/**
+ * Calls `cb` once per view when the video ends, and `watched` with the share of the video that was
+ * really played (seeking forward does not count) so the lesson can complete at 80 %.
+ */
+function useVdoEnded(
+  ref: React.RefObject<HTMLIFrameElement | null>,
+  otp: string | undefined,
+  cb: () => void,
+  watched: (percent: number) => void
+) {
   useEffect(() => {
     const iframe = ref.current;
     if (!iframe || !otp) return;
     let fired = false;
     let video: VdoVideo | null = null;
+    const tracker = new WatchTracker(watched);
     const fire = () => {
+      tracker.ended();
       if (fired) return;
       fired = true;
       cb();
     };
     const onTime = () => {
-      if (video && video.duration > 0 && video.currentTime / video.duration >= 0.97) fire();
+      if (video) tracker.tick(video.currentTime, video.duration);
     };
+    const onSeek = () => tracker.seek();
     let cancelled = false;
     loadVdoApi().then((api) => {
       if (cancelled || !api) return;
@@ -135,6 +157,7 @@ function useVdoEnded(ref: React.RefObject<HTMLIFrameElement | null>, otp: string
         video = api.getInstance(iframe).video;
         video.addEventListener("ended", fire);
         video.addEventListener("timeupdate", onTime);
+        video.addEventListener("seeking", onSeek);
       } catch {
         // player API unavailable: the learner can still press "Mark as complete"
       }
@@ -143,6 +166,7 @@ function useVdoEnded(ref: React.RefObject<HTMLIFrameElement | null>, otp: string
       cancelled = true;
       video?.removeEventListener?.("ended", fire);
       video?.removeEventListener?.("timeupdate", onTime);
+      video?.removeEventListener?.("seeking", onSeek);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [otp]);

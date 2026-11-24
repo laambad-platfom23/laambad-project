@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
@@ -11,11 +11,14 @@ import { authApi } from "@/services/api/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import { browserSupportsWebAuthn, startAuthentication } from "@simplewebauthn/browser";
+import { passkeysApi } from "@/services/api/student-features";
 import {
   ArrowLeft,
   ArrowRight,
   Eye,
   EyeOff,
+  Fingerprint,
   Loader2,
   Lock,
   Mail,
@@ -65,6 +68,56 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
+  const [passkeySupported, setPasskeySupported] = useState(false);
+  useEffect(() => setPasskeySupported(browserSupportsWebAuthn()), []);
+
+  /** After the server returned tokens (password or passkey): load the profile and go on. */
+  const finishLogin = async (data: { access_token?: string; token?: string; refresh_token: string }) => {
+    login((data.access_token || data.token)!, data.refresh_token);
+    let profile;
+    try {
+      const me = await authApi.me();
+      profile = me.data;
+      setUser(profile);
+    } catch {
+      logout();
+      toast.error("Signed in but could not load your profile. Try again.");
+      return;
+    }
+    if (isStaffUser(profile)) {
+      logout();
+      toast.error("Staff and instructors must sign in at the dashboard — not on the student page.");
+      router.push("/dashboard");
+      return;
+    }
+    await queryClient.invalidateQueries({ queryKey: ["dashboard-overview"] });
+    toast.success("Welcome back!");
+    const nextPath = safeNextPath(searchParams.get("next"));
+    if (profile.email_verified === false) {
+      router.push(`/verify-email?next=${encodeURIComponent(nextPath ?? defaultDashboardPathForUser(profile))}`);
+      return;
+    }
+    router.push(nextPath ?? defaultDashboardPathForUser(profile));
+  };
+
+  // A2: passkey sign-in (fingerprint / face / screen lock) — no e-mail or password typed
+  const handlePasskey = async () => {
+    setPasskeyLoading(true);
+    try {
+      const { data: opts } = await passkeysApi.loginOptions();
+      const response = await startAuthentication({ optionsJSON: opts.options as never });
+      const { data } = await passkeysApi.login(opts.challenge_id, response);
+      await finishLogin(data);
+    } catch (err: unknown) {
+      const name = (err as { name?: string })?.name;
+      if (name !== "NotAllowedError" && name !== "AbortError") {
+        toast.error(getApiErrorMessage(err, "Passkey sign-in failed"));
+      }
+    } finally {
+      setPasskeyLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -255,6 +308,19 @@ export function LoginForm() {
                   ) : null}
                 </Button>
               </form>
+
+              {passkeySupported ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handlePasskey}
+                  disabled={passkeyLoading || loading}
+                  className="mt-3 h-[48px] w-full rounded-full border-[#B8C4D0] text-[14px] font-semibold text-[#0B1F3A] dark:border-white/25 dark:text-white"
+                >
+                  {passkeyLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Fingerprint className="mr-2 h-4 w-4" />}
+                  Sign in with a passkey
+                </Button>
+              ) : null}
 
               <div className="relative z-20 mt-8 flex w-full items-center gap-2.5">
                 <span className="h-px flex-1 bg-[#D0D7DE] dark:bg-white/20" aria-hidden />

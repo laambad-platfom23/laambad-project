@@ -24,6 +24,10 @@ import {
   Library,
   Image as ImageIcon,
   ShoppingBag,
+  Route,
+  MessagesSquare,
+  BookMarked,
+  MessageCircle,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { paymentsApi } from "@/services/api/payments";
@@ -54,6 +58,9 @@ const studentNavItems: NavItem[] = [
   // flat list (the former "My Learning" group's tabs are top-level items)
   { label: "My Learning", href: "/dashboard/my-learning", icon: GraduationCap },
   { label: "My courses", href: "/dashboard/my-courses", icon: BookOpen },
+  { label: "Learning paths", href: "/dashboard/learning-paths", icon: Route },
+  { label: "Group discussion", href: "/dashboard/discussions", icon: MessagesSquare },
+  { label: "Books", href: "/dashboard/books", icon: BookMarked },
   { label: "Browse catalog", href: "/courses", icon: Library },
   { label: "Quizzes", href: "/dashboard/quizzes", icon: BrainCircuit },
   { label: "Assignments", href: "/dashboard/assignments", icon: ClipboardList },
@@ -102,6 +109,10 @@ const staffNavItems: NavItem[] = [
     visible: (u) => isAdminUser(u),
   },
   { label: "Assignments", href: "/dashboard/assignments", icon: ClipboardList },
+  { label: "Learning paths", href: "/dashboard/learning-paths", icon: Route, visible: (u) => isAdminUser(u) },
+  { label: "Books", href: "/dashboard/books/manage", icon: BookMarked, visible: (u) => isAdminUser(u) },
+  { label: "Group discussion", href: "/dashboard/discussions", icon: MessagesSquare },
+  { label: "WhatsApp", href: "/dashboard/whatsapp", icon: MessageCircle, visible: (u) => isAdminUser(u) },
   { label: "Reviews", href: "/dashboard/reviews", icon: MessageSquare },
   {
     label: "Users",

@@ -1,8 +1,9 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { VdoCipherPlayer } from "@/components/learning/vdocipher-player";
+import { WatchTracker } from "@/components/learning/watch-tracker";
 
 function youtubeVideoId(raw: string): string | null {
   const input = raw.trim();
@@ -96,14 +97,25 @@ type Props = {
   lessonId?: string;
   /** Called once when the learner reaches the end of the video (VdoCipher and direct files). */
   onEnded?: () => void;
+  /** A2: share of the video really played (0–100) — VdoCipher, direct files and YouTube. */
+  onWatched?: (percent: number) => void;
 };
 
-export function LessonVideoPlayer({ videoProvider, videoUrl, title, className, fillHeight, lessonId, onEnded }: Props) {
+export function LessonVideoPlayer({ videoProvider, videoUrl, title, className, fillHeight, lessonId, onEnded, onWatched }: Props) {
   const url = (videoUrl ?? "").trim();
   const provider = (videoProvider ?? "").toLowerCase().trim();
 
   if (provider === "vdocipher" && lessonId) {
-    return <VdoCipherPlayer key={lessonId} lessonId={lessonId} title={title} className={className} onEnded={onEnded} />;
+    return (
+      <VdoCipherPlayer
+        key={lessonId}
+        lessonId={lessonId}
+        title={title}
+        className={className}
+        onEnded={onEnded}
+        onWatched={onWatched}
+      />
+    );
   }
   const iframeClass = fillHeight ? "absolute inset-0 h-full w-full border-0" : "h-full w-full";
 
@@ -133,13 +145,7 @@ export function LessonVideoPlayer({ videoProvider, videoUrl, title, className, f
     }
     return (
       <VideoShell fillHeight={fillHeight} className={className}>
-        <iframe
-          title={title || "Lesson video"}
-          src={`https://www.youtube-nocookie.com/embed/${id}?rel=0`}
-          className={iframeClass}
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-          allowFullScreen
-        />
+        <YouTubeTracked key={id} videoId={id} title={title} className={iframeClass} onWatched={onWatched} />
       </VideoShell>
     );
   }
@@ -181,16 +187,13 @@ export function LessonVideoPlayer({ videoProvider, videoUrl, title, className, f
   if (provider === "direct" || /\.(mp4|webm|ogg)(\?|$)/i.test(url)) {
     return (
       <VideoShell fillHeight={fillHeight} className={className}>
-        <video
-          className={fillHeight ? "absolute inset-0 h-full w-full object-contain" : "h-full w-full"}
-          controls
-          playsInline
-          preload="metadata"
+        <DirectVideoTracked
+          key={url}
           src={url}
+          className={fillHeight ? "absolute inset-0 h-full w-full object-contain" : "h-full w-full"}
           onEnded={onEnded}
-        >
-          <track kind="captions" />
-        </video>
+          onWatched={onWatched}
+        />
       </VideoShell>
     );
   }
@@ -199,13 +202,7 @@ export function LessonVideoPlayer({ videoProvider, videoUrl, title, className, f
   if (yt) {
     return (
       <VideoShell fillHeight={fillHeight} className={className}>
-        <iframe
-          title={title || "Lesson video"}
-          src={`https://www.youtube-nocookie.com/embed/${yt}?rel=0`}
-          className={iframeClass}
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-          allowFullScreen
-        />
+        <YouTubeTracked key={yt} videoId={yt} title={title} className={iframeClass} onWatched={onWatched} />
       </VideoShell>
     );
   }
@@ -226,5 +223,133 @@ function UnsupportedVideo({ className, fillHeight }: { className?: string; fillH
     >
       Could not load this video URL. Check the link in the curriculum.
     </div>
+  );
+}
+
+/** Direct file (<video>): counts the seconds really played. */
+function DirectVideoTracked({
+  src,
+  className,
+  onEnded,
+  onWatched,
+}: {
+  src: string;
+  className: string;
+  onEnded?: () => void;
+  onWatched?: (percent: number) => void;
+}) {
+  const cbRef = useRef(onWatched);
+  cbRef.current = onWatched;
+  const tracker = useRef<WatchTracker | null>(null);
+  if (!tracker.current) tracker.current = new WatchTracker((p) => cbRef.current?.(p));
+  return (
+    <video
+      className={className}
+      controls
+      playsInline
+      preload="metadata"
+      src={src}
+      onTimeUpdate={(e) => tracker.current?.tick(e.currentTarget.currentTime, e.currentTarget.duration)}
+      onSeeking={() => tracker.current?.seek()}
+      onEnded={() => {
+        tracker.current?.ended();
+        onEnded?.();
+      }}
+    >
+      <track kind="captions" />
+    </video>
+  );
+}
+
+// ---- YouTube IFrame API (https://www.youtube.com/iframe_api): position polled once per second
+type YTPlayer = {
+  getCurrentTime: () => number;
+  getDuration: () => number;
+  getPlayerState: () => number;
+  destroy: () => void;
+};
+type YTStatic = { Player: new (el: HTMLIFrameElement, opts: { events?: Record<string, (e: { data: number }) => void> }) => YTPlayer };
+
+let ytPromise: Promise<YTStatic | null> | null = null;
+function loadYouTubeApi(): Promise<YTStatic | null> {
+  const w = window as unknown as { YT?: YTStatic & { loaded?: number }; onYouTubeIframeAPIReady?: () => void };
+  if (w.YT?.Player) return Promise.resolve(w.YT);
+  if (!ytPromise) {
+    ytPromise = new Promise((resolve) => {
+      const prev = w.onYouTubeIframeAPIReady;
+      w.onYouTubeIframeAPIReady = () => {
+        prev?.();
+        resolve(w.YT ?? null);
+      };
+      const s = document.createElement("script");
+      s.src = "https://www.youtube.com/iframe_api";
+      s.async = true;
+      s.onerror = () => {
+        ytPromise = null;
+        resolve(null);
+      };
+      document.head.appendChild(s);
+    });
+  }
+  return ytPromise;
+}
+
+function YouTubeTracked({
+  videoId,
+  title,
+  className,
+  onWatched,
+}: {
+  videoId: string;
+  title?: string;
+  className: string;
+  onWatched?: (percent: number) => void;
+}) {
+  const ref = useRef<HTMLIFrameElement>(null);
+  const cbRef = useRef(onWatched);
+  cbRef.current = onWatched;
+  useEffect(() => {
+    const iframe = ref.current;
+    if (!iframe) return;
+    let cancelled = false;
+    let player: YTPlayer | null = null;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const tracker = new WatchTracker((p) => cbRef.current?.(p));
+    loadYouTubeApi().then((YT) => {
+      if (cancelled || !YT) return;
+      try {
+        player = new YT.Player(iframe, {
+          events: {
+            onStateChange: (e) => {
+              if (e.data === 0) tracker.ended(); // ENDED
+            },
+          },
+        });
+        timer = setInterval(() => {
+          try {
+            if (player && player.getPlayerState?.() === 1) tracker.tick(player.getCurrentTime(), player.getDuration());
+          } catch {
+            /* player not ready */
+          }
+        }, 1000);
+      } catch {
+        // API unavailable: the learner can still press "Complete"
+      }
+    });
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [videoId]);
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  return (
+    <iframe
+      ref={ref}
+      title={title || "Lesson video"}
+      src={`https://www.youtube-nocookie.com/embed/${videoId}?rel=0&enablejsapi=1${origin ? `&origin=${encodeURIComponent(origin)}` : ""}`}
+      className={className}
+      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+      allowFullScreen
+    />
   );
 }

@@ -18,6 +18,12 @@ import * as misc from "@/server/services/misc";
 import * as quizzes from "@/server/services/quizzes";
 import * as assignments from "@/server/services/assignments";
 import * as publicStats from "@/server/services/public-stats";
+import * as learning from "@/server/services/learning";
+import * as discussions from "@/server/services/discussions";
+import * as learningPaths from "@/server/services/learning-paths";
+import * as books from "@/server/services/books";
+import * as whatsapp from "@/server/services/whatsapp";
+import * as passkeys from "@/server/services/passkeys";
 
 function pageParams(url: URL) {
   const page = Number(url.searchParams.get("page") || 1);
@@ -134,6 +140,37 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
     }
     if (path === "v1/public/site-settings" && method === "GET") {
       return wrapped(await siteSettings.getMap());
+    }
+
+    // ── A2: passkey sign-in (public; challenges are single-use and expire in 5 min) ──
+    if (path === "auth/passkey/login-options" && method === "POST") {
+      ipLimit(`pk-opt:${meta.ip}`, 60, 3_600_000);
+      return json(await passkeys.loginOptions(req.headers.get("origin")));
+    }
+    if (path === "auth/passkey/login" && method === "POST") {
+      ipLimit(`pk-login:${meta.ip}`, 30, 3_600_000);
+      const body = await readJson<{ challenge_id?: string; response?: never }>(req);
+      return json(await passkeys.loginVerify(req.headers.get("origin"), body ?? {}, meta));
+    }
+
+    // ── A2: learning paths + books (public lists; personal flags when signed in) ──
+    if (path === "learning-paths" && method === "GET") {
+      const user = await optionalAuth(req);
+      return user ? json(await learningPaths.listPaths(user)) : publicJson(await learningPaths.listPaths(null), 300);
+    }
+    if (path.match(/^learning-paths\/[^/]+$/) && method === "GET") {
+      const user = await optionalAuth(req);
+      const slug = decodeURIComponent(path.split("/")[1]);
+      return user ? json(await learningPaths.getPath(user, slug)) : publicJson(await learningPaths.getPath(null, slug), 300);
+    }
+    if (path === "books" && method === "GET") {
+      const user = await optionalAuth(req);
+      return user ? json(await books.listBooks(user)) : publicJson(await books.listBooks(null), 300);
+    }
+    if (path.match(/^books\/[^/]+$/) && method === "GET") {
+      const user = await optionalAuth(req);
+      const slug = decodeURIComponent(path.split("/")[1]);
+      return user ? json(await books.getBook(user, slug)) : publicJson(await books.getBook(null, slug), 300);
     }
 
     // ── Users (under /api/users) ──
@@ -587,7 +624,7 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
     }
     if (v1.match(/^lessons\/[^/]+\/progress$/) && method === "PATCH") {
       const user = await requireAuth(req);
-      const body = await readJson<{ completed?: boolean; completed_percent?: number }>(req);
+      const body = await readJson<{ completed?: boolean; completed_percent?: number; watched_percent?: number }>(req);
       return json(await enrollments.updateLessonProgress(user, v1.split("/")[1], body));
     }
     if (v1.match(/^lessons\/[^/]+\/vdocipher$/) && method === "GET") {
@@ -862,6 +899,167 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
       const user = await requireAuth(req);
       await misc.deleteReview(user, v1.split("/")[1]);
       return noContent();
+    }
+
+    // ── A2: streak, retake, WhatsApp consent, passkeys ──
+    if (v1 === "me/streak" && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await learning.streak(user.user_id));
+    }
+    if (v1.match(/^courses\/[^/]+\/retake$/) && method === "POST") {
+      const user = await requireAuth(req);
+      return json(await learning.retakeCourse(user, v1.split("/")[1], meta));
+    }
+    if (v1 === "me/whatsapp" && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await whatsapp.getMyWhatsapp(user.user_id));
+    }
+    if (v1 === "me/whatsapp" && method === "PUT") {
+      const user = await requireAuth(req);
+      const body = await readJson<{ consent?: boolean; whatsapp_phone?: string }>(req);
+      return json(await whatsapp.setMyWhatsapp(user.user_id, body ?? {}));
+    }
+    if (v1 === "admin/whatsapp/contacts" && method === "GET") {
+      const user = await requireAuth(req);
+      requireRole(user, "admin");
+      return json(
+        await whatsapp.adminContacts(user, {
+          segment: url.searchParams.get("segment"),
+          days: Number(url.searchParams.get("days") || 7),
+          q: url.searchParams.get("q"),
+          site: req.headers.get("origin") ?? undefined,
+        })
+      );
+    }
+    if (v1 === "me/passkeys" && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await passkeys.listMine(user));
+    }
+    if (v1 === "me/passkeys/options" && method === "POST") {
+      const user = await requireAuth(req);
+      return json(await passkeys.registrationOptions(user, req.headers.get("origin")));
+    }
+    if (v1 === "me/passkeys" && method === "POST") {
+      const user = await requireAuth(req);
+      const body = await readJson<{ challenge_id?: string; response?: never; name?: string }>(req);
+      return json(await passkeys.registrationVerify(user, req.headers.get("origin"), body ?? {}), 201);
+    }
+    if (v1.match(/^me\/passkeys\/[^/]+$/) && method === "DELETE") {
+      const user = await requireAuth(req);
+      return json(await passkeys.removeMine(user, v1.split("/")[2]));
+    }
+
+    // ── A2: group discussion (one class room per course) ──
+    if (v1 === "discussions" && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await discussions.myRooms(user));
+    }
+    if (v1.match(/^courses\/[^/]+\/discussion$/) && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await discussions.listMessages(user, decodeURIComponent(v1.split("/")[1]), url.searchParams.get("before")));
+    }
+    if (v1.match(/^courses\/[^/]+\/discussion$/) && method === "POST") {
+      const user = await requireAuth(req);
+      const body = await readJson<{ body?: string; parent_id?: string | null }>(req);
+      return json(await discussions.postMessage(user, decodeURIComponent(v1.split("/")[1]), body ?? {}), 201);
+    }
+    if (v1.match(/^discussion-messages\/[^/]+$/) && method === "DELETE") {
+      const user = await requireAuth(req);
+      return json(await discussions.deleteMessage(user, v1.split("/")[1]));
+    }
+    if (v1.match(/^discussion-messages\/[^/]+\/pin$/) && method === "PATCH") {
+      const user = await requireAuth(req);
+      const body = await readJson<{ pinned?: boolean }>(req);
+      return json(await discussions.pinMessage(user, v1.split("/")[1], !!body?.pinned));
+    }
+
+    // ── A2: learning paths (admin) ──
+    if (v1 === "learning-paths" && method === "POST") {
+      const user = await requireAuth(req);
+      requireRole(user, "admin");
+      return json(await learningPaths.createPath(user, await readJson(req)), 201);
+    }
+    if (v1.match(/^learning-paths\/[^/]+$/) && method === "PATCH") {
+      const user = await requireAuth(req);
+      requireRole(user, "admin");
+      return json(await learningPaths.updatePath(user, v1.split("/")[1], await readJson(req)));
+    }
+    if (v1.match(/^learning-paths\/[^/]+$/) && method === "DELETE") {
+      const user = await requireAuth(req);
+      requireRole(user, "admin");
+      return json(await learningPaths.deletePath(v1.split("/")[1]));
+    }
+
+    // ── A2: books ──
+    if (v1 === "my-books" && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await books.myBooks(user));
+    }
+    if (v1.match(/^books\/[^/]+\/file$/) && method === "GET") {
+      const user = await requireAuth(req);
+      await auth.requireVerifiedEmail(user);
+      return await books.streamFile(user, v1.split("/")[1], url.searchParams.get("download") === "1");
+    }
+    if (v1.match(/^books\/[^/]+\/pay\/waafi$/) && method === "POST") {
+      const user = await requireAuth(req);
+      await auth.requireVerifiedEmail(user);
+      const body = await readJson<{ phone?: string }>(req);
+      return json(await books.payWithWaafi(user, v1.split("/")[1], body ?? {}));
+    }
+    if (v1.match(/^books\/[^/]+\/pay\/manual$/) && method === "POST") {
+      const user = await requireAuth(req);
+      await auth.requireVerifiedEmail(user);
+      const body = await readJson<{ sender_phone?: string; reference?: string }>(req);
+      return json(await books.requestManual(user, v1.split("/")[1], body ?? {}), 201);
+    }
+    if (v1 === "admin/books" && method === "POST") {
+      const user = await requireAuth(req);
+      requireRole(user, "admin");
+      return json(await books.createBook(user, await readJson(req)), 201);
+    }
+    if (v1.match(/^admin\/books\/[^/]+$/) && method === "PATCH") {
+      const user = await requireAuth(req);
+      requireRole(user, "admin");
+      return json(await books.updateBook(v1.split("/")[2], await readJson(req)));
+    }
+    if (v1.match(/^admin\/books\/[^/]+$/) && method === "DELETE") {
+      const user = await requireAuth(req);
+      requireRole(user, "admin");
+      return json(await books.deleteBook(v1.split("/")[2]));
+    }
+    if (v1.match(/^admin\/books\/[^/]+\/upload-ticket$/) && method === "POST") {
+      const user = await requireAuth(req);
+      requireRole(user, "admin");
+      return json(await books.uploadTicket(v1.split("/")[2]));
+    }
+    if (v1.match(/^admin\/books\/[^/]+\/file$/) && method === "POST") {
+      const user = await requireAuth(req);
+      requireRole(user, "admin");
+      const id = v1.split("/")[2];
+      if ((req.headers.get("content-type") || "").includes("multipart/form-data")) {
+        const form = await req.formData();
+        const file = form.get("file");
+        if (!(file instanceof File)) throw Err.invalidInput("file required");
+        return json(await books.uploadServerFile(id, file));
+      }
+      return json(await books.attachBlobFile(id, await readJson(req)));
+    }
+    if (v1 === "admin/book-orders" && method === "GET") {
+      const user = await requireAuth(req);
+      requireRole(user, "admin");
+      return json(await books.adminOrders(url.searchParams.get("status")));
+    }
+    if (v1.match(/^admin\/book-orders\/[^/]+\/approve$/) && method === "POST") {
+      const user = await requireAuth(req);
+      requireRole(user, "admin");
+      const body = await readJson<{ reference?: string }>(req).catch(() => ({}) as { reference?: string });
+      return json(await books.adminApproveOrder(v1.split("/")[2], body?.reference));
+    }
+    if (v1.match(/^admin\/book-orders\/[^/]+\/reject$/) && method === "POST") {
+      const user = await requireAuth(req);
+      requireRole(user, "admin");
+      const body = await readJson<{ reason?: string }>(req).catch(() => ({}) as { reason?: string });
+      return json(await books.adminRejectOrder(v1.split("/")[2], body?.reason));
     }
 
     // files

@@ -7,6 +7,7 @@ import { certificatesApi } from "@/services/api/certificates";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EnrolledCourseCard } from "@/components/dashboard/enrolled-course-card";
+import { StreakCard } from "@/components/dashboard/streak-card";
 import { Button } from "@/components/ui/button";
 import {
   BookOpen,
@@ -117,6 +118,9 @@ export default function MyLearningPage() {
           </Card>
         ))}
       </div>
+
+      {/* A2: daily learning streak */}
+      <StreakCard />
 
       {/* Enrolled Courses */}
       <Card className="border-none shadow-sm">

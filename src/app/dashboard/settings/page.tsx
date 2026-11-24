@@ -14,6 +14,9 @@ import { uploadsApi } from "@/services/api/uploads";
 import { getInitials, getApiErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 import { Loader2, Camera } from "lucide-react";
+import { isStaffUser } from "@/lib/auth-routing";
+import { PasskeysCard } from "@/components/dashboard/passkeys-card";
+import { WhatsappConsentCard } from "@/components/dashboard/whatsapp-consent-card";
 
 export default function SettingsPage() {
   const { user, setUser } = useAuthStore();
@@ -130,6 +133,14 @@ export default function SettingsPage() {
           </Button>
         </CardContent>
       </Card>
+
+      {/* A2: sign-in with passkeys + WhatsApp consent */}
+      {!isStaffUser(user) ? (
+        <>
+          <PasskeysCard />
+          <WhatsappConsentCard />
+        </>
+      ) : null}
 
       {/* Notifications */}
       <Card>

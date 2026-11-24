@@ -1,11 +1,12 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
-import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, MessagesSquare, RotateCcw, Trophy } from "lucide-react";
+import { learningApi } from "@/services/api/student-features";
 import { coursesApi } from "@/services/api/courses";
 import { dashboardApi } from "@/services/api/dashboard";
 import { enrollmentsApi } from "@/services/api/enrollments";
@@ -164,31 +165,49 @@ function LearnCoursePageInner() {
     },
   });
 
-  // Video reached the end → mark the lesson complete (green tick), stay on the lesson.
-  const videoEndedMutation = useMutation({
-    mutationFn: async (lessonId: string) => {
-      const res = await enrollmentsApi.updateLessonProgress(lessonId, { completed: true, completed_percent: 100 });
-      return (res?.data ?? null) as { course_completed?: boolean; certificate_id?: string | null } | null;
-    },
-    onSuccess: (result) => {
+  // A2: the player reports how much of the video was really watched; the server completes the
+  // lesson at 80 % (green tick) and never lowers saved progress. One request at a time per lesson.
+  const watchInFlight = useRef<Set<string>>(new Set());
+  const handleWatched = async (lessonId: string | undefined, percent: number) => {
+    if (!lessonId || progressByLesson.get(lessonId)?.completed) return;
+    if (watchInFlight.current.has(lessonId)) return;
+    watchInFlight.current.add(lessonId);
+    try {
+      const { data } = await learningApi.watched(lessonId, percent);
+      if (data?.completed) {
+        queryClient.invalidateQueries({ queryKey: ["course-progress", course?.id] });
+        queryClient.invalidateQueries({ queryKey: ["dashboard-overview"] });
+        queryClient.invalidateQueries({ queryKey: ["my-streak"] });
+        if (data.certificate_id) {
+          const certId = data.certificate_id;
+          toast.success("🎓 Course completed — your certificate is ready!", {
+            duration: 12000,
+            action: { label: "View certificate", onClick: () => router.push(`/dashboard/certificates/${certId}`) },
+          });
+          queryClient.invalidateQueries({ queryKey: ["my-certificates"] });
+        } else {
+          toast.success("✓ Lesson completed — you watched 80% of it");
+        }
+      }
+    } catch {
+      // progress is retried at the next 10 % step; the learner can always press "Complete"
+    } finally {
+      watchInFlight.current.delete(lessonId);
+    }
+  };
+
+  const retakeMutation = useMutation({
+    mutationFn: () => learningApi.retake(course!.id).then((r) => r.data),
+    onSuccess: () => {
+      toast.success("Course restarted — your certificate is kept. Good luck!");
       queryClient.invalidateQueries({ queryKey: ["course-progress", course?.id] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-overview"] });
-      if (result?.certificate_id) {
-        const certId = result.certificate_id;
-        toast.success("🎓 Course completed — your certificate is ready!", {
-          duration: 12000,
-          action: { label: "View certificate", onClick: () => router.push(`/dashboard/certificates/${certId}`) },
-        });
-        queryClient.invalidateQueries({ queryKey: ["my-certificates"] });
-      } else {
-        toast.success("✓ Lesson completed");
-      }
+      if (flat.length) selectLesson(flat[0].lesson.id);
     },
+    onError: (err: unknown) => toast.error(getApiErrorMessage(err, "Could not restart the course")),
   });
-  const handleVideoEnded = (lessonId?: string) => {
-    if (!lessonId || progressByLesson.get(lessonId)?.completed) return;
-    videoEndedMutation.mutate(lessonId);
-  };
+  const courseFinished =
+    !!progress && progress.total_lessons > 0 && progress.completed_lessons >= progress.total_lessons;
 
   const handlePreviousLesson = () => {
     if (!canGoPrevious) return;
@@ -335,12 +354,20 @@ function LearnCoursePageInner() {
             "dark:bg-[#030A14]",
           )}
         >
-          <h1
-            className="shrink-0 truncate px-4 pb-2 pt-3 text-lg font-bold tracking-tight text-[#0f172a] dark:text-white sm:px-6 sm:text-xl lg:px-8"
-            title={course.title}
-          >
-            {course.title}
-          </h1>
+          <div className="flex shrink-0 items-center justify-between gap-3 px-4 pb-2 pt-3 sm:px-6 lg:px-8">
+            <h1
+              className="min-w-0 truncate text-lg font-bold tracking-tight text-[#0f172a] dark:text-white sm:text-xl"
+              title={course.title}
+            >
+              {course.title}
+            </h1>
+            <Button asChild variant="outline" size="sm" className="shrink-0 rounded-xl">
+              <Link href={`/dashboard/discussions/${encodeURIComponent(slug)}`}>
+                <MessagesSquare className="h-4 w-4" aria-hidden />
+                <span className="hidden sm:inline">Class discussion</span>
+              </Link>
+            </Button>
+          </div>
 
           <div className="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden px-4 pb-3 sm:px-6 lg:px-8">
             <div
@@ -356,7 +383,7 @@ function LearnCoursePageInner() {
                 videoUrl={selected?.lesson.video_url}
                 lessonId={selected?.lesson.id}
                 title={selected?.lesson.title}
-                onEnded={() => handleVideoEnded(selected?.lesson.id)}
+                onWatched={(pct) => handleWatched(selected?.lesson.id, pct)}
                 className="w-full max-w-[min(100%,1600px)] rounded-none shadow-none ring-0 sm:mx-auto"
               />
             </div>
@@ -402,6 +429,30 @@ function LearnCoursePageInner() {
                 </Button>
               </div>
             </div>
+
+            {courseFinished ? (
+              <div className="mt-3 flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-2xl border border-success/30 bg-success-soft px-4 py-3">
+                <p className="flex items-center gap-2 text-sm font-semibold text-success">
+                  <Trophy className="h-4 w-4" aria-hidden />
+                  You finished this course
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={retakeMutation.isPending}
+                  onClick={() => {
+                    if (window.confirm("Start this course again? Your lesson progress will be reset. Your certificate is kept.")) {
+                      retakeMutation.mutate();
+                    }
+                  }}
+                  className="rounded-xl"
+                >
+                  {retakeMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                  Retake course
+                </Button>
+              </div>
+            ) : null}
 
             {selected ? (
               <div
