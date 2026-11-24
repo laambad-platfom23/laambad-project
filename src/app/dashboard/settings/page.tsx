@@ -15,6 +15,7 @@ import { getInitials, getApiErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 import { Loader2, Camera } from "lucide-react";
 import { isStaffUser } from "@/lib/auth-routing";
+import { EmailPrefsCard } from "@/components/dashboard/email-prefs-card";
 import { PasskeysCard } from "@/components/dashboard/passkeys-card";
 import { WhatsappConsentCard } from "@/components/dashboard/whatsapp-consent-card";
 
@@ -24,7 +25,6 @@ export default function SettingsPage() {
   const [email] = useState(user?.email || "");
   const [phone, setPhone] = useState(user?.phone || "");
   const [avatarUrl, setAvatarUrl] = useState(user?.avatar_url || "");
-  const [notifications, setNotifications] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -142,38 +142,8 @@ export default function SettingsPage() {
         </>
       ) : null}
 
-      {/* Notifications */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Notifications</CardTitle>
-          <CardDescription>Configure how you receive notifications.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium">Email Notifications</p>
-              <p className="text-xs text-muted-foreground">Receive email for important updates</p>
-            </div>
-            <Switch checked={notifications} onCheckedChange={setNotifications} />
-          </div>
-          <Separator />
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium">Push Notifications</p>
-              <p className="text-xs text-muted-foreground">Receive in-app push notifications</p>
-            </div>
-            <Switch defaultChecked />
-          </div>
-          <Separator />
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium">Assignment Reminders</p>
-              <p className="text-xs text-muted-foreground">Get reminded before deadlines</p>
-            </div>
-            <Switch defaultChecked />
-          </div>
-        </CardContent>
-      </Card>
+      {/* A4: real e-mail preferences (the old switches were placeholders) */}
+      <EmailPrefsCard />
 
       {/* Danger Zone */}
       <Card className="border-destructive/50">

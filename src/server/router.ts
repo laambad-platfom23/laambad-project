@@ -16,6 +16,12 @@ import * as siteSettings from "@/server/services/site-settings";
 import * as uploads from "@/server/services/uploads";
 import * as misc from "@/server/services/misc";
 import * as quizzes from "@/server/services/quizzes";
+import * as quizTaking from "@/server/services/quiz-taking";
+import * as reminders from "@/server/services/reminders";
+import * as resources from "@/server/services/resources";
+import { checkUnsubscribeToken } from "@/server/notify";
+import { isUuid } from "@/lib/uuid";
+import { prisma } from "@/lib/db";
 import * as assignments from "@/server/services/assignments";
 import * as publicStats from "@/server/services/public-stats";
 import * as learning from "@/server/services/learning";
@@ -171,6 +177,27 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
       const user = await optionalAuth(req);
       const slug = decodeURIComponent(path.split("/")[1]);
       return user ? json(await books.getBook(user, slug)) : publicJson(await books.getBook(null, slug), 300);
+    }
+
+    // ── A4: daily learning reminders (Vercel Cron sends "Authorization: Bearer <CRON_SECRET>") ──
+    if (path === "cron/reminders" && method === "GET") {
+      const secret = process.env.CRON_SECRET?.trim();
+      if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) throw Err.unauthorized();
+      return json(await reminders.runReminders({ dryRun: url.searchParams.get("dry") === "1" }));
+    }
+    // ── A4: one-click "stop reminders" link from the e-mail (signed, no sign-in needed) ──
+    if (path === "email/unsubscribe" && method === "GET") {
+      const u = url.searchParams.get("u") ?? "";
+      const t = url.searchParams.get("t") ?? "";
+      const ok = isUuid(u) && checkUnsubscribeToken(u, t);
+      if (ok) await prisma.user.updateMany({ where: { id: u, emailRemindersOffAt: null }, data: { emailRemindersOffAt: new Date() } });
+      const msg = ok
+        ? "You will not receive learning reminder e-mails any more. You can turn them on again in Settings."
+        : "This link is not valid.";
+      return new Response(
+        `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Laambad</title><body style="font-family:Arial,sans-serif;background:#EEF1F5;margin:0;padding:48px 16px;text-align:center;color:#0B1F3A"><div style="max-width:420px;margin:auto;background:#fff;border-radius:16px;padding:28px"><h1 style="font-size:20px">Laambad</h1><p>${msg}</p><p><a href="/dashboard/settings" style="color:#E84A27">Open settings</a></p></div></body>`,
+        { status: ok ? 200 : 400, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } }
+      );
     }
 
     // ── Users (under /api/users) ──
@@ -542,8 +569,12 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
       return json(await assignments.createForCourse(user, v1.split("/")[1], body), 201);
     }
     if (v1.match(/^courses\/[^/]+\/quizzes$/) && method === "GET") {
-      await requireAuth(req);
-      return json(await quizzes.listByCourse(v1.split("/")[1]));
+      const user = await requireAuth(req);
+      const courseId = v1.split("/")[1];
+      // staff of the course: full list (drafts too); students: published quizzes with their status
+      const takeView = url.searchParams.get("view") === "take";
+      if (!takeView && (await quizTaking.canManageCourse(user, courseId))) return json(await quizzes.listByCourse(courseId));
+      return json({ data: await quizTaking.courseQuizzes(user, courseId) });
     }
     if (v1.match(/^courses\/[^/]+\/certificate$/) && method === "POST") {
       const user = await requireAuth(req);
@@ -734,15 +765,19 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
     }
     if (v1.match(/^quizzes\/[^/]+\/attempts$/) && method === "POST") {
       const user = await requireAuth(req);
-      return json(await quizzes.startAttempt(user, v1.split("/")[1]), 201);
+      return json(await quizTaking.startAttempt(user, v1.split("/")[1], meta), 201);
     }
     if (v1.match(/^quizzes\/[^/]+\/attempts$/) && method === "GET") {
       const user = await requireAuth(req);
       return json(await quizzes.listAttempts(user, v1.split("/")[1]));
     }
     if (v1.match(/^quizzes\/[^/]+$/) && method === "GET") {
-      await requireAuth(req);
-      return json(await quizzes.getQuiz(v1.split("/")[1]));
+      const user = await requireAuth(req);
+      const quizId = v1.split("/")[1];
+      // the answer key only for the course staff; students get the quiz without answers
+      const takeView = url.searchParams.get("view") === "take";
+      if (!takeView && (await quizTaking.canManageQuiz(user, quizId))) return json(await quizzes.getQuiz(quizId));
+      return json(await quizTaking.quizForTaking(user, quizId));
     }
     if (v1.match(/^quizzes\/[^/]+$/) && method === "PATCH") {
       const user = await requireAuth(req);
@@ -766,12 +801,12 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
     }
     if (v1.match(/^attempts\/[^/]+\/submit$/) && method === "POST") {
       const user = await requireAuth(req);
-      const body = await readJson<{ answers: { question_id: string; answer: string }[] }>(req);
-      return json(await quizzes.submitAttempt(user, v1.split("/")[1], body.answers || []));
+      const body = await readJson<{ answers: { question_id: string; keys?: string[]; answer?: string }[] }>(req);
+      return json(await quizTaking.submitAttempt(user, v1.split("/")[1], body?.answers || []));
     }
     if (v1.match(/^attempts\/[^/]+$/) && method === "GET") {
       const user = await requireAuth(req);
-      return json(await quizzes.getAttempt(user, v1.split("/")[1]));
+      return json(await quizTaking.attemptResult(user, v1.split("/")[1]));
     }
 
     // certificates
@@ -909,6 +944,30 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
     if (v1.match(/^courses\/[^/]+\/retake$/) && method === "POST") {
       const user = await requireAuth(req);
       return json(await learning.retakeCourse(user, v1.split("/")[1], meta));
+    }
+    // ── course resources (downloads) ──
+    if (v1.match(/^courses\/[^/]+\/resources$/) && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await resources.courseResources(user, v1.split("/")[1]));
+    }
+    if (v1.match(/^resources\/[^/]+\/link$/) && method === "GET") {
+      const user = await requireAuth(req);
+      await auth.requireVerifiedEmail(user);
+      return json(await resources.resourceLink(user, decodeURIComponent(v1.split("/")[1])));
+    }
+    if (v1 === "me/email-prefs" && method === "GET") {
+      const user = await requireAuth(req);
+      const u = await prisma.user.findFirst({ where: { id: user.user_id }, select: { emailRemindersOffAt: true } });
+      return json({ reminders: !u?.emailRemindersOffAt });
+    }
+    if (v1 === "me/email-prefs" && method === "PUT") {
+      const user = await requireAuth(req);
+      const body = await readJson<{ reminders?: boolean }>(req);
+      await prisma.user.update({
+        where: { id: user.user_id },
+        data: { emailRemindersOffAt: body?.reminders === false ? new Date() : null, updatedAt: new Date() },
+      });
+      return json({ reminders: body?.reminders !== false });
     }
     if (v1 === "me/whatsapp" && method === "GET") {
       const user = await requireAuth(req);

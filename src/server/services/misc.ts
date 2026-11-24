@@ -1,3 +1,5 @@
+import { notifyCertificate, notifyEnrolled, notifyPaymentRejected } from "@/server/notify";
+import { plain } from "@/lib/plain-text";
 import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { prisma, newId, now } from "@/lib/db";
@@ -314,6 +316,8 @@ export async function completeCourseAndIssue(userId: string, courseId: string) {
       updatedAt: t,
     },
   });
+  const courseRow = await prisma.course.findFirst({ where: { id: courseId }, select: { title: true } });
+  notifyCertificate(userId, row.id, decodeHtmlEntities(courseRow?.title ?? "your course"));
   return getCertificate(userId, row.id);
 }
 
@@ -628,6 +632,7 @@ async function checkoutAmount(courseId: string, couponCode?: string) {
 async function activateEnrollment(userId: string, courseId: string, t: Date) {
   const existing = await findBestEnrollment(userId, courseId);
   if (existing && hasCourseAccess(existing)) return;
+  notifyEnrolled(userId, courseId); // A4: in-app + e-mail, once per course
   if (existing) {
     await prisma.enrollment.update({
       where: { id: existing.id },
@@ -869,6 +874,10 @@ export async function rejectPayment(paymentId: string, reason?: string) {
     where: { id: paymentId },
     data: { status: "failed", refundReason: (reason || "rejected by admin").slice(0, 500), updatedAt: now() },
   });
+  if (p.userId) {
+    const c = await prisma.course.findFirst({ where: { id: p.courseId }, select: { title: true } });
+    notifyPaymentRejected(p.userId, p.id, decodeHtmlEntities(c?.title ?? "your course"), reason?.trim() || undefined);
+  }
   return { ok: true };
 }
 
@@ -1011,6 +1020,7 @@ export async function approveOfflineEnrollment(enrollmentId: string) {
   const e = await prisma.enrollment.findFirst({ where: { id: enrollmentId, deletedAt: null } });
   if (!e) throw Err.notFound("enrollment not found");
   const t = now();
+  if (!hasCourseAccess(e)) notifyEnrolled(e.userId, e.courseId);
   await prisma.enrollment.update({
     where: { id: enrollmentId },
     data: { paymentStatus: "paid", status: "active", updatedAt: t },
@@ -1198,10 +1208,11 @@ export async function listLessonQuestions(lessonId: string) {
       lesson_id: q.lessonId,
       course_id: q.courseId,
       is_course_level: q.lessonId == null,
-      body: q.body,
+      // migrated Tutor Q&A is WordPress HTML: shown as plain text
+      body: plain(q.body),
       // field names used by the lesson Q&A panel (LessonQuestion in services/api/lesson-qa.ts)
       author_name: q.author?.name ?? "Student",
-      answer: q.answerBody,
+      answer: q.answerBody ? plain(q.answerBody) : q.answerBody,
       answerer_name: q.answerer?.name ?? null,
       answered_at: q.answeredAt?.toISOString() ?? null,
       created_at: q.createdAt?.toISOString(),

@@ -10,6 +10,7 @@ import { fromMinor, toMinor } from "@/server/money";
 import { decodeHtmlEntities } from "@/lib/html-entities";
 import { completeCourseAndIssue } from "./misc";
 import { recordLearningActivity } from "./learning";
+import { notifyEnrolled } from "@/server/notify";
 
 /** A2: a lesson completes automatically once this share of its video has been watched. */
 export const AUTO_COMPLETE_PERCENT = 80;
@@ -82,6 +83,7 @@ export async function enroll(
     },
   });
 
+  notifyEnrolled(user.user_id, courseId);
   return {
     id: enrollmentId,
     course_id: courseId,

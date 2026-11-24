@@ -15,6 +15,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LessonVideoPlayer } from "@/components/learning/lesson-video-player";
 import { LessonQAPanel } from "@/components/learning/lesson-qa-panel";
+import { SectionQuizzes } from "@/components/learning/section-quizzes";
+import { CourseResources } from "@/components/learning/course-resources";
 import type { Course, Lesson, Section } from "@/types";
 import { useAuthStore } from "@/store/auth-store";
 import { useAuth } from "@/hooks/use-auth";
@@ -487,6 +489,12 @@ function LearnCoursePageInner() {
                 ) : null}
               </div>
             ) : null}
+
+            {selected ? (
+              <SectionQuizzes courseId={course.id} sectionId={selected.section.id} sectionTitle={selected.section.title} />
+            ) : null}
+
+            {selected ? <CourseResources courseId={course.id} lessonId={selected.lesson.id} /> : null}
 
             {selected ? (
               <LessonQAPanel lessonId={selected.lesson.id} isInstructor={canAnswerLessonQA} />

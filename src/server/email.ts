@@ -68,7 +68,9 @@ export async function sendEmail(mail: Mail): Promise<{ ok: boolean }> {
 const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
-function layout(title: string, inner: string) {
+const CODE_FOOTER = "If you did not request this, you can ignore this e-mail. Nobody at Laambad will ever ask you for this code.";
+
+function layout(title: string, inner: string, footerHtml: string = esc(CODE_FOOTER)) {
   return `<!doctype html><html><body style="margin:0;background:#EEF1F5;font-family:Arial,Helvetica,sans-serif;color:#0B1F3A">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:32px 12px"><tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border-radius:16px;overflow:hidden">
@@ -79,7 +81,7 @@ function layout(title: string, inner: string) {
 ${inner}
 </td></tr>
 <tr><td style="padding:16px 28px;border-top:1px solid #e2e8f0;font-size:12px;color:#64748b">
-If you did not request this, you can ignore this e-mail. Nobody at Laambad will ever ask you for this code.</td></tr>
+${footerHtml}</td></tr>
 </table></td></tr></table></body></html>`;
 }
 
@@ -117,5 +119,42 @@ ${codeBlock(input.code)}
 <p style="margin:0;font-size:13px;color:#64748b;line-height:1.5">The code expires in ${input.minutes} minutes.</p>`
     ),
     text: `${input.name ? `Hi ${input.name},` : "Hi,"}\n\nYour Laambad verification code: ${input.code}\n\nIt expires in ${input.minutes} minutes. If you did not request this, ignore this e-mail.`,
+  };
+}
+
+/**
+ * A4: a general notice (enrolment, payment, certificate, book, reminder) with one button.
+ * Every value is escaped; links are built by the server.
+ */
+export function noticeMail(input: {
+  to: string;
+  name: string;
+  subject: string;
+  title: string;
+  lines: string[];
+  cta?: { label: string; url: string };
+  unsubscribeUrl?: string;
+}): Mail {
+  const hi = input.name ? `Hi ${esc(input.name)},` : "Hi,";
+  const body = input.lines.map((l) => `<p style="margin:0 0 10px;line-height:1.55">${esc(l)}</p>`).join("\n");
+  const button = input.cta
+    ? `<p style="text-align:center;margin:20px 0 4px"><a href="${esc(input.cta.url)}" style="display:inline-block;background:#E84A27;color:#ffffff;text-decoration:none;font-weight:bold;padding:12px 24px;border-radius:999px">${esc(input.cta.label)}</a></p>`
+    : "";
+  const footer = input.unsubscribeUrl
+    ? `You receive learning reminders from Laambad. <a href="${esc(input.unsubscribeUrl)}" style="color:#64748b">Stop these reminders</a>.`
+    : "This is an automatic message about your Laambad account.";
+  return {
+    to: input.to,
+    subject: input.subject,
+    html: layout(input.title, `<p style="margin:0 0 10px;line-height:1.5">${hi}</p>
+${body}
+${button}`, footer),
+    text: [
+      input.name ? `Hi ${input.name},` : "Hi,",
+      "",
+      ...input.lines,
+      ...(input.cta ? ["", `${input.cta.label}: ${input.cta.url}`] : []),
+      ...(input.unsubscribeUrl ? ["", `Stop these reminders: ${input.unsubscribeUrl}`] : []),
+    ].join("\n"),
   };
 }

@@ -18,6 +18,7 @@ import { fromMinor, toMinor } from "@/server/money";
 import { isWaafiPayConfigured, normalizeSomaliMobile, waafiPurchase } from "@/server/waafipay";
 import { slugify } from "./learning-paths";
 import { assertUuid, isUuid } from "@/lib/uuid";
+import { notifyBook } from "@/server/notify";
 
 const MAX_PDF_BYTES = 200 * 1024 * 1024;
 const MAX_SERVER_UPLOAD = 4 * 1024 * 1024; // Vercel functions accept ~4.5 MB request bodies
@@ -399,6 +400,7 @@ export async function payWithWaafi(user: AuthUser, bookId: string, input: { phon
       where: { id: row.id, status: "pending" },
       data: { status: "paid", paidAt: t2, transactionId: outcome.transactionId || null, updatedAt: t2 },
     });
+    notifyBook(user.user_id, row.id, b.title);
     return { ...orderView({ ...row, status: "paid" }), outcome: "approved" as const, message: "Payment received. Your book is ready." };
   }
   if (outcome.kind === "declined") {
@@ -486,6 +488,8 @@ export async function adminApproveOrder(id: string, reference?: string) {
     where: { id },
     data: { status: "paid", paidAt: t, updatedAt: t, ...(ref ? { transactionId: ref } : {}) },
   });
+  const book = await prisma.book.findFirst({ where: { id: o.bookId }, select: { title: true } });
+  notifyBook(o.userId, o.id, book?.title ?? "your book");
   return { ok: true };
 }
 

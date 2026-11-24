@@ -32,6 +32,8 @@ model User {
   /// A2: WhatsApp reminders only with consent (null = no consent)
   whatsappPhone       String?   @map("whatsapp_phone") @db.VarChar(30)
   whatsappConsentAt   DateTime? @map("whatsapp_consent_at") @db.Timestamptz()
+  /// A4: learning reminder e-mails turned off (null = on)
+  emailRemindersOffAt DateTime? @map("email_reminders_off_at") @db.Timestamptz()
 
   role               Role                 @relation(fields: [roleId], references: [id])
   legacyRoles        UserLegacyRole[]
@@ -60,6 +62,7 @@ model User {
   learningDays       LearningDay[]
   discussionMessages CourseDiscussionMessage[]
   bookOrders         BookOrder[]
+  emailLogs          EmailLog[]
 
   @@index([passwordScheme])
   @@map("users")
@@ -1015,4 +1018,20 @@ model BookOrder {
   @@index([userId, bookId], map: "book_orders_user_book_idx")
   @@index([status, createdAt(sort: Desc)], map: "book_orders_status_idx")
   @@map("book_orders")
+}
+
+/// A4: one row per event e-mail (unique per user + kind + ref) so nothing is sent twice.
+model EmailLog {
+  id        String   @id @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  kind      String   @db.VarChar(40)
+  refKey    String   @map("ref_key") @db.VarChar(120)
+  ok        Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, kind, refKey], map: "email_log_user_kind_ref_uq")
+  @@index([kind, createdAt(sort: Desc)], map: "email_log_kind_created_idx")
+  @@map("email_log")
 }

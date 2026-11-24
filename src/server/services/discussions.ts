@@ -11,6 +11,7 @@ import { userPhotoUrl } from "@/server/legacy-uploads";
 import { decodeHtmlEntities } from "@/lib/html-entities";
 import { assertUuid, isUuid } from "@/lib/uuid";
 import { savePublicUpload } from "@/lib/local-storage";
+import { notify } from "@/server/notify";
 
 const MAX_BODY = 2000;
 const PAGE = 60;
@@ -269,6 +270,16 @@ export async function postMessage(
     data: { id: newId(), courseId: course.id, userId: user.user_id, parentId, body, imageUrl, createdAt: t, updatedAt: t },
     select: SELECT,
   });
+  if (row.parent && row.parent.user.id !== user.user_id) {
+    notify({
+      userId: row.parent.user.id,
+      kind: "discussion_reply",
+      ref: row.id,
+      title: `${row.user.name} replied to you in ${decodeHtmlEntities(course.title)}`,
+      body: body ? body.slice(0, 200) : "📷 Photo",
+      link: `/dashboard/discussions/${encodeURIComponent(course.slug)}`,
+    });
+  }
   return view(row, user, moderator, course.instructorId);
 }
 
