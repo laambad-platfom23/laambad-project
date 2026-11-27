@@ -1,7 +1,9 @@
 "use client";
 
 import { CourseSettingsCard } from "@/components/dashboard/course-settings-card";
-import { useEffect, useMemo, useState } from "react";
+import { CourseCoverField } from "@/components/dashboard/course-cover-field";
+import { UnsavedContext, createUnsavedStore, useLeaveWarning, useUnsavedCount } from "@/components/dashboard/course-builder/unsaved";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -99,21 +101,46 @@ export default function CourseBuilderPage() {
   const [audience, setAudience] = useState("");
   const [materials, setMaterials] = useState("");
   const [isPublic, setIsPublic] = useState(false);
+  const [coverUrl, setCoverUrl] = useState("");
 
+  // the form as it is now, and as the server sent it the last time we took the server's values
+  const form: BuilderForm = { title, slug, excerpt, description, categoryId, level, coverUrl, benefits, requirements, audience, materials, isPublic };
+  const applied = useRef<BuilderForm | null>(null);
+  const setForm = (f: BuilderForm) => {
+    setTitle(f.title);
+    setSlug(f.slug);
+    setExcerpt(f.excerpt);
+    setDescription(f.description);
+    setCategoryId(f.categoryId);
+    setLevel(f.level);
+    setCoverUrl(f.coverUrl);
+    setBenefits(f.benefits);
+    setRequirements(f.requirements);
+    setAudience(f.audience);
+    setMaterials(f.materials);
+    setIsPublic(f.isPublic);
+  };
+
+  // A course reload (e.g. after a lesson is saved) must NOT wipe what the user typed and did not save
+  // yet: the server's values are taken only on the first load or when there are no local edits.
   useEffect(() => {
     if (!course) return;
-    setTitle(course.title ?? "");
-    setSlug(course.slug ?? "");
-    setExcerpt(course.excerpt ?? "");
-    setDescription(course.description ?? "");
-    setCategoryId(course.category_id ?? "");
-    setLevel(course.level ?? "");
-    setBenefits(course.benefits ?? "");
-    setRequirements(course.requirements ?? "");
-    setAudience(course.target_audience ?? "");
-    setMaterials(course.materials ?? "");
-    setIsPublic(!!course.is_public);
+    const server = formFromCourse(course);
+    if (!applied.current || sameForm(form, applied.current)) {
+      setForm(server);
+      applied.current = server;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [course]);
+
+  const basicsDirty = !!applied.current && !sameForm(form, applied.current, BASICS);
+  const additionalDirty = !!applied.current && !sameForm(form, applied.current, ADDITIONAL);
+
+  // unsaved topics / lessons of the curriculum step
+  const [unsaved] = useState(createUnsavedStore);
+  const curriculumPending = useUnsavedCount(unsaved);
+  const anyUnsaved = basicsDirty || additionalDirty || curriculumPending > 0;
+  useLeaveWarning(anyUnsaved);
 
   const canEdit = !!course && (isAdmin || course.instructor_id === user?.id);
 
@@ -129,6 +156,7 @@ export default function CourseBuilderPage() {
               description,
               category_id: categoryId || undefined,
               level: level || null,
+              cover_url: coverUrl.trim() || null,
             }
           : {
               benefits: benefits.trim() || null,
@@ -138,13 +166,46 @@ export default function CourseBuilderPage() {
               is_public: isPublic,
             },
       ),
-    onSuccess: () => {
+    onSuccess: (_r, part) => {
       toast.success("Saved");
+      // what was just saved is now the server's state
+      if (applied.current) {
+        const keys = part === "basics" ? BASICS : ADDITIONAL;
+        const next = { ...applied.current };
+        for (const k of keys) (next as Record<string, unknown>)[k] = form[k];
+        applied.current = next;
+      }
       queryClient.invalidateQueries({ queryKey: ["course", courseId] });
       queryClient.invalidateQueries({ queryKey: ["courses"] });
     },
     onError: (e) => toast.error(getApiErrorMessage(e, "Could not save")),
   });
+
+  /** Save what is open before leaving a step; false = stay (an error message was shown). */
+  const saveCurrentStep = async (): Promise<boolean> => {
+    if (step === "curriculum" && unsaved.count() > 0) {
+      const r = await unsaved.saveAll();
+      if (r.failed) {
+        toast.error(`${r.failed} change${r.failed === 1 ? "" : "s"} could not be saved — fix ${r.failed === 1 ? "it" : "them"} first.`);
+        return false;
+      }
+      return true;
+    }
+    const part = step === "basics" ? "basics" : step === "additional" ? "additional" : null;
+    if (part && (part === "basics" ? basicsDirty : additionalDirty)) {
+      if (part === "basics" && !title.trim()) {
+        toast.error("The course needs a title.");
+        return false;
+      }
+      try {
+        await save.mutateAsync(part);
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  };
+  const [moving, setMoving] = useState(false);
 
   const statusMut = useMutation({
     mutationFn: (s: CourseStatusValue) => coursesApi.setStatus(courseId, s),
@@ -156,7 +217,13 @@ export default function CourseBuilderPage() {
     onError: (e) => toast.error(getApiErrorMessage(e, "Could not change the status")),
   });
 
-  const goStep = (k: StepKey) => {
+  // every way of changing step (stepper, Next, Previous) saves the open step first
+  const goStep = async (k: StepKey) => {
+    if (k === step || moving) return;
+    setMoving(true);
+    const ok = await saveCurrentStep();
+    setMoving(false);
+    if (!ok) return;
     setStep(k);
     const p = new URLSearchParams(searchParams.toString());
     p.set("step", k);
@@ -164,7 +231,35 @@ export default function CourseBuilderPage() {
   };
   const idx = STEPS.findIndex((s) => s.key === step);
 
-  const cover = useMemo(() => (course ? publicCourseCoverImageUrlFromRaw(courseCoverRawUrl(course)) : null), [course]);
+  /** Save every unsaved change of every step (top-bar button, and before publishing). */
+  const saveEverything = async (): Promise<boolean> => {
+    if (unsaved.count() > 0) {
+      const r = await unsaved.saveAll();
+      if (r.failed) {
+        toast.error(`${r.failed} change${r.failed === 1 ? "" : "s"} could not be saved.`);
+        return false;
+      }
+    }
+    try {
+      if (basicsDirty) {
+        if (!title.trim()) {
+          toast.error("The course needs a title.");
+          return false;
+        }
+        await save.mutateAsync("basics");
+      }
+      if (additionalDirty) await save.mutateAsync("additional");
+    } catch {
+      return false;
+    }
+    return true;
+  };
+
+  // the cover just uploaded (not saved yet) shows at once; otherwise the course's cover
+  const cover = useMemo(
+    () => (coverUrl.trim() ? publicCourseCoverImageUrlFromRaw(coverUrl.trim()) : course ? publicCourseCoverImageUrlFromRaw(courseCoverRawUrl(course)) : null),
+    [course, coverUrl]
+  );
   const price = course?.active_pricing;
 
   if (!ready || isLoading) {
@@ -189,11 +284,18 @@ export default function CourseBuilderPage() {
   const status = course.status ?? "draft";
 
   return (
+    <UnsavedContext.Provider value={unsaved}>
     <div className="space-y-6">
       {/* top bar: back · title · stepper · status / publish */}
       <div className="sticky top-16 z-20 -mx-4 border-b border-border bg-background/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-          <Link href="/dashboard/courses" className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground">
+          <Link
+            href="/dashboard/courses"
+            onClick={(e) => {
+              if (anyUnsaved && !window.confirm("You have changes that are not saved. Leave without saving them?")) e.preventDefault();
+            }}
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+          >
             <ArrowLeft className="h-4 w-4" /> Courses
           </Link>
           <span className="hidden h-5 w-px bg-border sm:block" aria-hidden />
@@ -225,6 +327,27 @@ export default function CourseBuilderPage() {
             })}
           </ol>
           <div className="ml-auto flex items-center gap-2">
+            {anyUnsaved ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-warning/50 bg-warning-soft text-foreground hover:bg-warning-soft/80"
+                disabled={moving || save.isPending}
+                onClick={async () => {
+                  setMoving(true);
+                  const ok = await saveEverything();
+                  setMoving(false);
+                  if (ok && unsaved.count() === 0) toast.success("All changes saved");
+                }}
+                title={curriculumPending ? unsaved.labels().join(", ") : undefined}
+              >
+                {moving || save.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
+                {(() => {
+                  const total = curriculumPending + (basicsDirty ? 1 : 0) + (additionalDirty ? 1 : 0);
+                  return total > 1 ? `Save changes (${total})` : "Save changes";
+                })()}
+              </Button>
+            ) : null}
             <span className="rounded-full border border-border px-2.5 py-1 text-xs font-semibold text-muted-foreground">
               {STATUS_LABEL[status] ?? status}
             </span>
@@ -237,8 +360,14 @@ export default function CourseBuilderPage() {
               <Button
                 size="sm"
                 className="bg-brand text-brand-foreground hover:bg-brand-hover"
-                disabled={statusMut.isPending}
-                onClick={() => statusMut.mutate(isAdmin ? "published" : "pending")}
+                disabled={statusMut.isPending || moving}
+                onClick={async () => {
+                  // publish / send for review what is on screen, not an older saved version
+                  setMoving(true);
+                  const ok = await saveEverything();
+                  setMoving(false);
+                  if (ok) statusMut.mutate(isAdmin ? "published" : "pending");
+                }}
               >
                 {statusMut.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
                 {isAdmin ? "Publish" : "Submit for review"}
@@ -296,6 +425,9 @@ export default function CourseBuilderPage() {
               ) : (
                 <div className="flex aspect-video w-full items-center justify-center rounded-xl bg-muted text-sm text-muted-foreground">No cover image</div>
               )}
+              <Field label="Cover image" hint="Shown on course cards and the course page. Saved with “Save”.">
+                <CourseCoverField id="builder-cover" value={coverUrl} onChange={setCoverUrl} />
+              </Field>
               <Field label="Category">
                 <Select value={categoryId} onValueChange={setCategoryId}>
                   <SelectTrigger>
@@ -380,31 +512,48 @@ export default function CourseBuilderPage() {
         />
       ) : null}
 
-      {/* footer: previous / save / next */}
-      <div className="flex items-center justify-between gap-3 border-t border-border pt-5">
-        <Button variant="outline" disabled={idx === 0} onClick={() => goStep(STEPS[Math.max(0, idx - 1)].key)}>
+      {/* footer: previous / save / next — changing step saves the open step first */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-5">
+        <Button variant="outline" disabled={idx === 0 || moving} onClick={() => goStep(STEPS[Math.max(0, idx - 1)].key)}>
           <ArrowLeft className="mr-1.5 h-4 w-4" /> Previous
         </Button>
-        <div className="flex gap-2">
-          {step !== "curriculum" ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {step === "curriculum" && curriculumPending > 0 ? (
+            <span className="text-xs font-medium text-warning">
+              {curriculumPending} unsaved {curriculumPending === 1 ? "change" : "changes"}
+            </span>
+          ) : null}
+          {step === "curriculum" ? (
             <Button
               variant="outline"
-              disabled={save.isPending || (step === "basics" && !title.trim())}
+              disabled={moving || curriculumPending === 0}
+              onClick={async () => {
+                setMoving(true);
+                const r = await unsaved.saveAll();
+                setMoving(false);
+                if (!r.failed && r.saved) toast.success(r.saved === 1 ? "Change saved" : `${r.saved} changes saved`);
+              }}
+            >
+              {moving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Save className="mr-1.5 h-4 w-4" />}
+              Save all
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              disabled={save.isPending || moving || (step === "basics" && !title.trim())}
               onClick={() => save.mutate(step === "basics" ? "basics" : "additional")}
             >
               {save.isPending ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Save className="mr-1.5 h-4 w-4" />}
               Save
             </Button>
-          ) : null}
+          )}
           {idx < STEPS.length - 1 ? (
             <Button
               className="bg-brand text-brand-foreground hover:bg-brand-hover"
-              disabled={save.isPending}
-              onClick={async () => {
-                if (step !== "curriculum") await save.mutateAsync(step === "basics" ? "basics" : "additional").catch(() => null);
-                goStep(STEPS[idx + 1].key);
-              }}
+              disabled={save.isPending || moving}
+              onClick={() => goStep(STEPS[idx + 1].key)}
             >
+              {moving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
               Next <ArrowRight className="ml-1.5 h-4 w-4" />
             </Button>
           ) : null}
@@ -413,5 +562,46 @@ export default function CourseBuilderPage() {
 
       <CoursePricingDialog courseId={courseId} courseTitle={course.title} open={pricingOpen} onOpenChange={setPricingOpen} />
     </div>
+    </UnsavedContext.Provider>
   );
+}
+
+// ── the Basics / Additional form ──
+
+type BuilderForm = {
+  title: string;
+  slug: string;
+  excerpt: string;
+  description: string;
+  categoryId: string;
+  level: string;
+  coverUrl: string;
+  benefits: string;
+  requirements: string;
+  audience: string;
+  materials: string;
+  isPublic: boolean;
+};
+const BASICS: (keyof BuilderForm)[] = ["title", "slug", "excerpt", "description", "categoryId", "level", "coverUrl"];
+const ADDITIONAL: (keyof BuilderForm)[] = ["benefits", "requirements", "audience", "materials", "isPublic"];
+
+function formFromCourse(course: Course): BuilderForm {
+  return {
+    title: course.title ?? "",
+    slug: course.slug ?? "",
+    excerpt: course.excerpt ?? "",
+    description: course.description ?? "",
+    categoryId: course.category_id ?? "",
+    level: course.level ?? "",
+    coverUrl: course.cover_url ?? "",
+    benefits: course.benefits ?? "",
+    requirements: course.requirements ?? "",
+    audience: course.target_audience ?? "",
+    materials: course.materials ?? "",
+    isPublic: !!course.is_public,
+  };
+}
+
+function sameForm(a: BuilderForm, b: BuilderForm, keys: (keyof BuilderForm)[] = [...BASICS, ...ADDITIONAL]) {
+  return keys.every((k) => a[k] === b[k]);
 }

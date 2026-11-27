@@ -19,6 +19,10 @@ import * as quizzes from "@/server/services/quizzes";
 import * as quizTaking from "@/server/services/quiz-taking";
 import * as reminders from "@/server/services/reminders";
 import * as resources from "@/server/services/resources";
+import * as courseItems from "@/server/services/course-items";
+import * as notes from "@/server/services/notes";
+import * as announcements from "@/server/services/announcements";
+import * as reviews from "@/server/services/reviews";
 import * as courseReview from "@/server/services/course-review";
 import * as sequencing from "@/server/services/sequencing";
 import * as prerequisites from "@/server/services/prerequisites";
@@ -699,20 +703,29 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
       const body = await readJson<{ title: string; sort_order?: number }>(req);
       return json(await courses.addSection(user, v1.split("/")[1], body), 201);
     }
+    // A6: staff get every assignment of the course, students the ones in the curriculum + their status
     if (v1.match(/^courses\/[^/]+\/assignments$/) && method === "GET") {
-      await requireAuth(req);
-      return json(await assignments.listForCourse(v1.split("/")[1]));
+      const user = await requireAuth(req);
+      return json(await assignments.listForCourse(user, v1.split("/")[1]));
     }
     if (v1.match(/^courses\/[^/]+\/assignments$/) && method === "POST") {
       const user = await requireAuth(req);
-      const body = await readJson<{
-        title: string;
-        description?: string;
-        due_at?: string | null;
-        max_points?: number;
-        published?: boolean;
-      }>(req);
+      const body = await readJson<Parameters<typeof assignments.createForCourse>[2]>(req);
       return json(await assignments.createForCourse(user, v1.split("/")[1], body), 201);
+    }
+    // A6: everything besides the lessons, in one request (learn page / Course Builder)
+    if (v1.match(/^courses\/[^/]+\/learning-items$/) && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await courseItems.learningItems(user, v1.split("/")[1]));
+    }
+    if (v1.match(/^courses\/[^/]+\/builder-items$/) && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await courseItems.builderItems(user, v1.split("/")[1]));
+    }
+    if (v1.match(/^courses\/[^/]+\/resources$/) && method === "POST") {
+      const user = await requireAuth(req);
+      const body = await readJson<Parameters<typeof resources.createResource>[2]>(req);
+      return json(await resources.createResource(user, v1.split("/")[1], body), 201);
     }
     if (v1.match(/^courses\/[^/]+\/quizzes$/) && method === "GET") {
       const user = await requireAuth(req);
@@ -743,14 +756,29 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
       await requireAuth(req);
       return json(await misc.listReviews(v1.split("/")[1]));
     }
+    // A7: only a student with access reviews a course, once (posting again updates the review)
     if (v1.match(/^courses\/[^/]+\/reviews$/) && method === "POST") {
       const user = await requireAuth(req);
-      const body = await readJson<{ rating: number; comment?: string }>(req);
-      return json(await misc.createReview(user, v1.split("/")[1], body), 201);
+      const body = await readJson<{ rating?: unknown; comment?: unknown }>(req);
+      return json(await reviews.saveMine(user, v1.split("/")[1], body ?? {}), 201);
     }
     if (v1.match(/^courses\/[^/]+\/reviews\/stats$/) && method === "GET") {
       await requireAuth(req);
       return json(await misc.reviewStats(v1.split("/")[1]));
+    }
+    if (v1.match(/^courses\/[^/]+\/reviews\/summary$/) && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await reviews.summary(user, v1.split("/")[1]));
+    }
+    // A7: course announcements
+    if (v1.match(/^courses\/[^/]+\/announcements$/) && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await announcements.listForCourse(user, v1.split("/")[1]));
+    }
+    if (v1.match(/^courses\/[^/]+\/announcements$/) && method === "POST") {
+      const user = await requireAuth(req);
+      const body = await readJson<{ title?: unknown; body?: unknown }>(req);
+      return json(await announcements.create(user, v1.split("/")[1], body ?? {}), 201);
     }
     if (v1.match(/^courses\/[^/]+$/) && method === "GET") {
       const user = await requireAuth(req);
@@ -841,33 +869,58 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
       return wrapped(await misc.answerLessonQuestion(user, v1.split("/")[1], body.answer ?? body.answer_body ?? ""));
     }
 
+    // A6: course resources (Course Builder)
+    if (v1.match(/^course-resources\/[^/]+$/) && method === "PATCH") {
+      const user = await requireAuth(req);
+      const body = await readJson<{ title?: string; lesson_id?: string | null }>(req);
+      return json(await resources.updateResource(user, v1.split("/")[1], body));
+    }
+    if (v1.match(/^course-resources\/[^/]+$/) && method === "DELETE") {
+      const user = await requireAuth(req);
+      await resources.deleteResource(user, v1.split("/")[1]);
+      return noContent();
+    }
+
+    // A6: files for course resources / assignment briefs (staff) and assignment answers (students)
+    if (v1 === "uploads/ticket" && method === "POST") {
+      const user = await requireAuth(req);
+      return json(await uploads.fileTicket(user, await readJson(req)));
+    }
+    if (v1 === "uploads/file" && method === "POST") {
+      const user = await requireAuth(req);
+      return json(await uploads.uploadFileLocally(user, await req.formData()), 201);
+    }
+
     // assignments
+    if (v1 === "my/assignments" && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await assignments.myAssignments(user));
+    }
+    if (v1 === "staff/assignments" && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await assignments.staffAssignments(user));
+    }
     if (v1.match(/^assignments\/[^/]+\/submissions\/me$/) && method === "GET") {
       const user = await requireAuth(req);
       return json(await assignments.mySubmission(user, v1.split("/")[1]));
     }
     if (v1.match(/^assignments\/[^/]+\/submissions$/) && method === "POST") {
       const user = await requireAuth(req);
-      const body = await readJson<{ file_url: string }>(req);
-      return json(await assignments.submit(user, v1.split("/")[1], body.file_url), 201);
+      const body = await readJson<{ body?: string; files?: unknown; file_url?: string }>(req);
+      await auth.requireVerifiedEmail(user);
+      return json(await assignments.submit(user, v1.split("/")[1], body ?? {}), 201);
     }
     if (v1.match(/^assignments\/[^/]+\/submissions$/) && method === "GET") {
       const user = await requireAuth(req);
       return json(await assignments.listSubmissions(user, v1.split("/")[1]));
     }
     if (v1.match(/^assignments\/[^/]+$/) && method === "GET") {
-      await requireAuth(req);
-      return json(await assignments.getAssignment(v1.split("/")[1]));
+      const user = await requireAuth(req);
+      return json(await assignments.getAssignment(user, v1.split("/")[1]));
     }
     if (v1.match(/^assignments\/[^/]+$/) && method === "PATCH") {
       const user = await requireAuth(req);
-      const body = await readJson<{
-        title?: string;
-        description?: string;
-        due_at?: string | null;
-        max_points?: number;
-        published?: boolean;
-      }>(req);
+      const body = await readJson<Parameters<typeof assignments.updateAssignment>[2]>(req);
       return json(await assignments.updateAssignment(user, v1.split("/")[1], body));
     }
     if (v1.match(/^assignments\/[^/]+$/) && method === "DELETE") {
@@ -877,26 +930,21 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
     }
     if (v1.match(/^submissions\/[^/]+\/grade$/) && method === "PATCH") {
       const user = await requireAuth(req);
-      const body = await readJson<{ grade: number; feedback?: string }>(req);
-      return json(await assignments.gradeSubmission(user, v1.split("/")[1], body));
+      const body = await readJson<{ grade?: unknown; feedback?: unknown }>(req);
+      return json(await assignments.gradeSubmission(user, v1.split("/")[1], body ?? {}));
     }
 
     // quizzes
     if (v1 === "quizzes" && method === "POST") {
       const user = await requireAuth(req);
-      const body = await readJson<{
-        course_id: string;
-        section_id?: string;
-        title: string;
-        description?: string;
-        time_limit_secs?: number;
-        pass_percent?: number;
-        max_attempts?: number;
-        shuffle_questions?: boolean;
-        published?: boolean;
-        required_for_cert?: boolean;
-      }>(req);
-      return json(await quizzes.createQuiz(user, body), 201);
+      const body = await readJson<Parameters<typeof quizzes.saveQuiz>[2]>(req);
+      return json(await quizzes.saveQuiz(user, null, body), 201);
+    }
+    // A6: Course Builder saves a quiz with all its questions at once
+    if (v1.match(/^quizzes\/[^/]+$/) && method === "PUT") {
+      const user = await requireAuth(req);
+      const body = await readJson<Parameters<typeof quizzes.saveQuiz>[2]>(req);
+      return json(await quizzes.saveQuiz(user, v1.split("/")[1], body));
     }
     if (v1.match(/^quizzes\/[^/]+\/questions$/) && method === "POST") {
       const user = await requireAuth(req);
@@ -924,7 +972,7 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
       const quizId = v1.split("/")[1];
       // the answer key only for the course staff; students get the quiz without answers
       const takeView = url.searchParams.get("view") === "take";
-      if (!takeView && (await quizTaking.canManageQuiz(user, quizId))) return json(await quizzes.getQuiz(quizId));
+      if (!takeView && (await quizTaking.canManageQuiz(user, quizId))) return json(await quizzes.staffQuiz(user, quizId));
       return json(await quizTaking.quizForTaking(user, quizId));
     }
     if (v1.match(/^quizzes\/[^/]+$/) && method === "PATCH") {
@@ -1075,12 +1123,58 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
     // reviews delete/update
     if (v1.match(/^reviews\/[^/]+$/) && method === "PATCH") {
       const user = await requireAuth(req);
-      const body = await readJson<{ rating?: number; comment?: string }>(req);
-      return json(await misc.updateReview(user, v1.split("/")[1], body));
+      const body = await readJson<{ rating?: unknown; comment?: unknown }>(req);
+      return json(await reviews.updateOne(user, v1.split("/")[1], body ?? {}));
     }
     if (v1.match(/^reviews\/[^/]+$/) && method === "DELETE") {
       const user = await requireAuth(req);
+      if (!isUuid(v1.split("/")[1])) throw Err.notFound("review not found");
       await misc.deleteReview(user, v1.split("/")[1]);
+      return noContent();
+    }
+    // A7: dashboard → Reviews (my open courses) / Announcements
+    if (v1 === "my/reviews" && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await reviews.myCourses(user));
+    }
+    if (v1 === "announcements" && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await announcements.forDashboard(user));
+    }
+    if (v1.match(/^announcements\/[^/]+$/) && method === "PATCH") {
+      const user = await requireAuth(req);
+      const body = await readJson<{ title?: unknown; body?: unknown }>(req);
+      return json(await announcements.update(user, v1.split("/")[1], body ?? {}));
+    }
+    if (v1.match(/^announcements\/[^/]+$/) && method === "DELETE") {
+      const user = await requireAuth(req);
+      await announcements.remove(user, v1.split("/")[1]);
+      return noContent();
+    }
+    // A7: the student's notebook
+    if (v1 === "notes" && method === "GET") {
+      const user = await requireAuth(req);
+      return json(
+        await notes.listNotes(user, {
+          course_id: url.searchParams.get("course_id"),
+          lesson_id: url.searchParams.get("lesson_id"),
+          q: url.searchParams.get("q"),
+        })
+      );
+    }
+    if (v1 === "notes" && method === "POST") {
+      const user = await requireAuth(req);
+      const body = await readJson<{ lesson_id?: unknown; body?: unknown; position_secs?: unknown }>(req);
+      return json(await notes.createNote(user, body ?? {}), 201);
+    }
+    if (v1.match(/^notes\/[^/]+$/) && method === "PATCH") {
+      const user = await requireAuth(req);
+      const body = await readJson<{ body?: unknown }>(req);
+      return json(await notes.updateNote(user, v1.split("/")[1], body ?? {}));
+    }
+    if (v1.match(/^notes\/[^/]+$/) && method === "DELETE") {
+      const user = await requireAuth(req);
+      await notes.deleteNote(user, v1.split("/")[1]);
       return noContent();
     }
 

@@ -44,7 +44,28 @@ import {
   rowsToPayload,
   type LessonFormRow,
 } from "@/lib/lesson-form";
+import {
+  BuilderItemsProvider,
+  CourseMaterials,
+  LessonItems,
+  TopicItems,
+  UnplacedItems,
+  type LessonOption,
+} from "@/components/dashboard/course-builder/lesson-items";
+import type { Course } from "@/types";
 import { AssetUploadButton } from "@/components/dashboard/asset-upload-button";
+import { useRegisterUnsaved } from "@/components/dashboard/course-builder/unsaved";
+
+/** Every lesson of the course, in order, for the "which lesson" pickers. */
+function lessonOptionsOf(course: Course | undefined): LessonOption[] {
+  return [...(course?.sections ?? [])]
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    .flatMap((s) =>
+      [...(s.lessons ?? [])]
+        .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+        .map((l) => ({ id: l.id, title: l.title, sectionTitle: s.title }))
+    );
+}
 
 type Props = {
   courseId: string | null;
@@ -107,6 +128,8 @@ function ManageCourseCurriculumInner({ courseId, open, onOpenChange, bare = fals
     onError: () => toast.error("Could not add section"),
   });
 
+  const lessonOptions = lessonOptionsOf(course);
+
   // Course Builder: same editor without the dialog chrome
   if (bare) {
     return (
@@ -119,9 +142,12 @@ function ManageCourseCurriculumInner({ courseId, open, onOpenChange, bare = fals
           )}
 
           {!isLoading && course && (
+            <BuilderItemsProvider courseId={course.id} lessonOptions={lessonOptions}>
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Add or edit sections (modules), then lessons inside each. Use Save on each block to persist changes.
+                Add topics, then lessons inside each. Under every lesson you can add a <strong>quiz</strong>, an{" "}
+                <strong>assignment</strong> or a <strong>resource</strong> (file or link) — students see it right under that lesson and
+                in the course&apos;s Quizzes / Assignments / Resources tabs.
               </p>
 
               {(course.sections?.length ?? 0) === 0 && (
@@ -153,7 +179,11 @@ function ManageCourseCurriculumInner({ courseId, open, onOpenChange, bare = fals
                 )}
                 Add section
               </Button>
+
+              <CourseMaterials />
+              <UnplacedItems />
             </div>
+            </BuilderItemsProvider>
           )}
       </div>
     );
@@ -195,9 +225,11 @@ function ManageCourseCurriculumInner({ courseId, open, onOpenChange, bare = fals
           )}
 
           {!isLoading && course && (
+            <BuilderItemsProvider courseId={course.id} lessonOptions={lessonOptions}>
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Add or edit sections (modules), then lessons inside each. Use Save on each block to persist changes.
+                Add or edit sections (modules), then lessons inside each. Under every lesson you can add a quiz, an assignment or a
+                resource.
               </p>
 
               {(course.sections?.length ?? 0) === 0 && (
@@ -229,7 +261,11 @@ function ManageCourseCurriculumInner({ courseId, open, onOpenChange, bare = fals
                 )}
                 Add section
               </Button>
+
+              <CourseMaterials />
+              <UnplacedItems />
             </div>
+            </BuilderItemsProvider>
           )}
         </div>
 
@@ -317,6 +353,14 @@ function SectionCard({
     deleteSectionMutation.mutate();
   };
 
+  // an edited topic title counts as unsaved until "Save section" (or "Save all") is pressed
+  useRegisterUnsaved(
+    `section:${section.id}`,
+    !!title.trim() && title.trim() !== section.title,
+    `Topic “${title.trim()}”`,
+    () => saveSection.mutateAsync()
+  );
+
   return (
     <div className="rounded-xl border bg-card p-4 shadow-sm">
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -365,6 +409,7 @@ function SectionCard({
       </div>
       {moduleOpen && (
         <div className="ml-2 space-y-3 border-l-2 border-primary/20 pl-4">
+          <TopicItems sectionId={section.id} />
           {(section.lessons ?? []).map((lesson, li) => (
             <LessonCard
               key={lesson.id}
@@ -404,14 +449,6 @@ const VIDEO_PROVIDERS = [
   { value: "direct", label: "Direct file (MP4, etc.)" },
   { value: "embed", label: "Other / embed link" },
 ] as const;
-
-function newRow(): LessonFormRow {
-  return {
-    clientId: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
-    name: "",
-    url: "",
-  };
-}
 
 function LessonCard({
   courseId,
@@ -523,6 +560,8 @@ function LessonCard({
   ]);
   const extrasLocal = JSON.stringify([videoProvider === "vdocipher" ? vdoId.trim() : "", durationMin.trim(), isPreview]);
   const dirty = localSnap !== serverSnap || extrasLocal !== extrasServer;
+  // the builder lists unsaved lessons, saves them with "Save all" and before changing step
+  useRegisterUnsaved(`lesson:${lesson.id}`, dirty && !!title.trim(), `Lesson “${title.trim()}”`, () => saveLesson.mutateAsync());
 
   const handleDeleteLesson = () => {
     if (!globalThis.confirm("Delete this lesson?")) return;
@@ -592,9 +631,12 @@ function LessonCard({
 
       {!expanded && (
         <p className="pl-10 text-xs text-muted-foreground">
-          {description.trim() ? description.slice(0, 120) + (description.length > 120 ? "…" : "") : "Click the arrow to edit description, content, video and attachments."}
+          {description.trim() ? description.slice(0, 120) + (description.length > 120 ? "…" : "") : "Click the arrow to edit the description, content and video."}
         </p>
       )}
+
+      {/* A6: quizzes, assignments and resources of this lesson */}
+      <LessonItems lessonId={lesson.id} />
 
       {expanded && (
         <>
@@ -697,14 +739,16 @@ function LessonCard({
         </label>
       </div>
 
+      {attachmentRows.length ? (
+        <>
       <Separator />
 
       <div className="flex items-center gap-2 text-sm font-medium text-foreground">
         <Paperclip className="h-4 w-4 text-primary" />
-        Attachments
+        Links saved with the older editor
       </div>
       <p className="text-xs text-muted-foreground">
-        Paste a link or upload a PDF/image (same storage as course assets: local <code className="rounded bg-muted px-0.5">public/uploads</code> or S3).
+        Students still see these. To add new files or links, use <strong>+ Resource</strong> under the lesson.
       </p>
       <div className="space-y-2">
         {attachmentRows.map((row) => (
@@ -764,16 +808,9 @@ function LessonCard({
             </Button>
           </div>
         ))}
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setAttachmentRows((prev) => [...prev, newRow()])}
-        >
-          <Plus className="mr-1 h-4 w-4" />
-          Add attachment
-        </Button>
       </div>
+        </>
+      ) : null}
         </>
       )}
     </div>

@@ -1,290 +1,145 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { reviewsApi } from "@/services/api/reviews";
-import { coursesApi } from "@/services/api/courses";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
+import { MessageSquare, Search, Star } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
-import {
-  Star,
-  MessageSquare,
-  Send,
-  Trash2,
-  User,
-} from "lucide-react";
-import { toast } from "sonner";
-import type {
-  CourseReview,
-  CourseRatingStats,
-  Course,
-  PaginatedResponse,
-} from "@/types";
+import { Stars } from "@/components/learning/star-rating";
+import { MyReviewBox, ReviewsPanel } from "@/components/learning/reviews-panel";
+import { courseReviewsApi } from "@/services/api/course-extras";
+import { coursesApi } from "@/services/api/courses";
+import { useAuthStore } from "@/store/auth-store";
+import { isAdminUser, isStaffUser } from "@/lib/auth-routing";
+import { decodeHtmlEntities } from "@/lib/html-entities";
 import { cn } from "@/lib/utils";
 
-function StarRating({
-  value,
-  onChange,
-  readonly = false,
-  size = "md",
-}: {
-  value: number;
-  onChange?: (v: number) => void;
-  readonly?: boolean;
-  size?: "sm" | "md" | "lg";
-}) {
-  const sizeClass = size === "sm" ? "h-4 w-4" : size === "lg" ? "h-7 w-7" : "h-5 w-5";
+export default function ReviewsPage() {
+  const user = useAuthStore((s) => s.user);
+  if (!user) return <Skeleton className="h-64 rounded-xl" />;
+  return isStaffUser(user) ? <StaffReviews admin={isAdminUser(user)} /> : <StudentReviews />;
+}
+
+/** Students: ONLY the courses they can open — rate each one once, change or delete it later. */
+function StudentReviews() {
+  const { data, isLoading } = useQuery({
+    queryKey: ["my-reviews"],
+    queryFn: () => courseReviewsApi.myCourses().then((r) => r.data.data),
+  });
+  const list = data ?? [];
+  const done = list.filter((c) => c.mine).length;
   return (
-    <div className="flex items-center gap-0.5">
-      {[1, 2, 3, 4, 5].map((i) => (
-        <button
-          key={i}
-          type="button"
-          disabled={readonly}
-          onClick={() => onChange?.(i)}
-          className={cn(
-            "transition-transform",
-            !readonly && "hover:scale-110 cursor-pointer",
-            readonly && "cursor-default"
-          )}
-        >
-          <Star
-            className={cn(
-              sizeClass,
-              i <= value
-                ? "fill-amber-400 text-amber-400"
-                : "text-muted-foreground/30"
-            )}
-          />
-        </button>
-      ))}
+    <div className="space-y-6">
+      <div>
+        <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
+          <Star className="h-7 w-7 text-amber-500" /> Reviews
+        </h1>
+        <p className="mt-1 text-muted-foreground">
+          Rate the courses you are taking. You can review each of your courses once and change your review any time.
+          {list.length ? ` You reviewed ${done} of ${list.length}.` : ""}
+        </p>
+      </div>
+      {isLoading ? (
+        <div className="space-y-3">
+          {[1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-32 rounded-xl" />
+          ))}
+        </div>
+      ) : !list.length ? (
+        <Card className="border-dashed">
+          <CardContent className="py-14 text-center text-sm text-muted-foreground">
+            <MessageSquare className="mx-auto mb-3 h-10 w-10 text-muted-foreground/40" />
+            When you are enrolled in a course, you can review it here.
+          </CardContent>
+        </Card>
+      ) : (
+        <ul className="space-y-3">
+          {list.map((c) => (
+            <li key={c.course.id} className="overflow-hidden rounded-2xl border bg-card">
+              <div className="flex items-center gap-3 border-b bg-muted/30 px-4 py-3">
+                {c.course.cover_image_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={c.course.cover_image_url} alt="" className="h-11 w-16 shrink-0 rounded-md object-cover" />
+                ) : (
+                  <span className="h-11 w-16 shrink-0 rounded-md bg-brand-soft" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <Link href={`/learn/${encodeURIComponent(c.course.slug)}?tab=reviews`} className="block truncate font-semibold hover:underline">
+                    {c.course.title}
+                  </Link>
+                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Stars value={c.rating.average} size={12} />
+                    {c.rating.count ? `${c.rating.average.toFixed(1)} · ${c.rating.count} ${c.rating.count === 1 ? "rating" : "ratings"}` : "No ratings yet"}
+                  </span>
+                </div>
+                {!c.mine ? <span className="shrink-0 rounded-full bg-brand-soft px-2.5 py-0.5 text-xs font-semibold text-brand">Not rated yet</span> : null}
+              </div>
+              <div className="px-4 py-3">
+                <MyReviewBox courseId={c.course.id} mine={c.mine} compact />
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
 
-export default function ReviewsPage() {
-  const [selectedCourse, setSelectedCourse] = useState("");
-  const [rating, setRating] = useState(0);
-  const [comment, setComment] = useState("");
-  const queryClient = useQueryClient();
-
-  const { data: coursesResp, isLoading: loadingCourses } =
-    useQuery<PaginatedResponse<Course>>({
-      queryKey: ["all-courses-for-reviews"],
-      queryFn: async () => (await coursesApi.list(1, 100)).data,
-    });
-
-  const { data: stats } = useQuery<CourseRatingStats>({
-    queryKey: ["review-stats", selectedCourse],
-    queryFn: async () => (await reviewsApi.stats(selectedCourse)).data,
-    enabled: !!selectedCourse,
+/** Staff: the ratings of the courses they teach (admins: every course; admins can remove a review). */
+function StaffReviews({ admin }: { admin: boolean }) {
+  const [selected, setSelected] = useState("");
+  const [q, setQ] = useState("");
+  const { data, isLoading } = useQuery({
+    queryKey: ["reviews-courses", admin],
+    queryFn: () => coursesApi.list(1, 100, !admin).then((r) => r.data.data),
   });
-
-  const { data: reviewsResp, isLoading: loadingReviews } = useQuery<
-    PaginatedResponse<CourseReview>
-  >({
-    queryKey: ["reviews", selectedCourse],
-    queryFn: async () => (await reviewsApi.list(selectedCourse)).data,
-    enabled: !!selectedCourse,
-  });
-
-  const createMutation = useMutation({
-    mutationFn: () =>
-      reviewsApi.create(selectedCourse, { rating, comment }),
-    onSuccess: () => {
-      toast.success("Review submitted!");
-      setRating(0);
-      setComment("");
-      queryClient.invalidateQueries({ queryKey: ["reviews", selectedCourse] });
-      queryClient.invalidateQueries({
-        queryKey: ["review-stats", selectedCourse],
-      });
-    },
-    onError: (err: any) => {
-      const msg =
-        err.response?.data?.error?.message || "Failed to submit review";
-      toast.error(msg);
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (reviewId: string) => reviewsApi.delete(reviewId),
-    onSuccess: () => {
-      toast.success("Review deleted");
-      queryClient.invalidateQueries({ queryKey: ["reviews", selectedCourse] });
-      queryClient.invalidateQueries({
-        queryKey: ["review-stats", selectedCourse],
-      });
-    },
-    onError: () => toast.error("Failed to delete review"),
-  });
-
-  const courses = coursesResp?.data ?? [];
-  const reviews = reviewsResp?.data ?? [];
-
+  const courses = (data ?? []).filter((c) => !q.trim() || c.title.toLowerCase().includes(q.trim().toLowerCase()));
+  const current = selected || courses[0]?.id || "";
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-          <Star className="h-7 w-7 text-amber-500" />
-          Course Reviews
+        <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
+          <Star className="h-7 w-7 text-amber-500" /> Course reviews
         </h1>
-        <p className="text-muted-foreground mt-1">
-          Rate and review courses you have taken.
-        </p>
+        <p className="mt-1 text-muted-foreground">What students say about {admin ? "the courses" : "your courses"}.</p>
       </div>
-
-      {/* Course Selector */}
-      <div className="flex flex-wrap gap-2">
-        {loadingCourses ? (
-          <Skeleton className="h-9 w-40" />
-        ) : (
-          courses.map((c) => (
-            <Button
-              key={c.id}
-              variant={selectedCourse === c.id ? "default" : "outline"}
-              size="sm"
-              onClick={() => setSelectedCourse(c.id)}
-            >
-              {c.title}
-            </Button>
-          ))
-        )}
-      </div>
-
-      {!selectedCourse ? (
-        <Card className="border-none shadow-sm">
-          <CardContent className="py-16 text-center">
-            <MessageSquare className="h-12 w-12 mx-auto text-muted-foreground/40" />
-            <p className="text-muted-foreground mt-3">
-              Select a course to view and write reviews.
-            </p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-6 lg:grid-cols-3">
-          {/* Left: Stats + Write */}
-          <div className="space-y-6">
-            {/* Rating Stats */}
-            {stats && (
-              <Card className="border-none shadow-sm">
-                <CardContent className="p-6 text-center space-y-3">
-                  <p className="text-5xl font-bold">
-                    {stats.average.toFixed(1)}
-                  </p>
-                  <StarRating
-                    value={Math.round(stats.average)}
-                    readonly
-                    size="lg"
-                  />
-                  <p className="text-sm text-muted-foreground">
-                    {stats.count} review{stats.count !== 1 ? "s" : ""}
-                  </p>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Write Review */}
-            <Card className="border-none shadow-sm">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">Write a Review</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <p className="text-sm text-muted-foreground mb-2">
-                    Your Rating
-                  </p>
-                  <StarRating value={rating} onChange={setRating} size="lg" />
-                </div>
-                <Textarea
-                  placeholder="Share your experience with this course..."
-                  value={comment}
-                  onChange={(e) => setComment(e.target.value)}
-                  rows={4}
-                />
-                <Button
-                  className="w-full"
-                  disabled={
-                    rating === 0 || createMutation.isPending
-                  }
-                  onClick={() => createMutation.mutate()}
-                >
-                  <Send className="h-4 w-4 mr-2" />
-                  {createMutation.isPending
-                    ? "Submitting..."
-                    : "Submit Review"}
-                </Button>
-              </CardContent>
-            </Card>
+      <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
+        <div className="space-y-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a course" className="pl-9" />
           </div>
-
-          {/* Right: Reviews List */}
-          <div className="lg:col-span-2 space-y-4">
-            {loadingReviews ? (
-              [1, 2, 3].map((i) => (
-                <Skeleton key={i} className="h-28 rounded-xl" />
-              ))
-            ) : reviews.length === 0 ? (
-              <Card className="border-none shadow-sm">
-                <CardContent className="py-12 text-center">
-                  <MessageSquare className="h-10 w-10 mx-auto text-muted-foreground/40" />
-                  <p className="text-muted-foreground mt-3">
-                    No reviews yet. Be the first!
-                  </p>
-                </CardContent>
-              </Card>
-            ) : (
-              reviews.map((rev) => (
-                <Card
-                  key={rev.id}
-                  className="border-none shadow-sm hover:shadow-md transition-shadow"
-                >
-                  <CardContent className="p-5">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                          <User className="h-5 w-5 text-primary" />
-                        </div>
-                        <div>
-                          <p className="font-semibold text-sm">
-                            {rev.user?.name ?? "Student"}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {new Date(rev.created_at).toLocaleDateString()}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <StarRating
-                          value={rev.rating}
-                          readonly
-                          size="sm"
-                        />
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                          onClick={() => deleteMutation.mutate(rev.id)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </div>
-                    {rev.comment && (
-                      <p className="text-sm text-muted-foreground mt-3 pl-13 leading-relaxed">
-                        {rev.comment}
-                      </p>
+          {isLoading ? (
+            <Skeleton className="h-64 rounded-xl" />
+          ) : (
+            <ul className="max-h-[70vh] space-y-1 overflow-y-auto rounded-xl border bg-card p-1.5">
+              {courses.map((c) => (
+                <li key={c.id}>
+                  <button
+                    type="button"
+                    onClick={() => setSelected(c.id)}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm",
+                      current === c.id ? "bg-brand-soft font-semibold text-brand" : "hover:bg-muted"
                     )}
-                  </CardContent>
-                </Card>
-              ))
-            )}
-          </div>
+                  >
+                    <span className="min-w-0 flex-1 truncate">{decodeHtmlEntities(c.title)}</span>
+                    {c.rating?.count ? (
+                      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                        ★ {c.rating.average.toFixed(1)} ({c.rating.count})
+                      </span>
+                    ) : null}
+                  </button>
+                </li>
+              ))}
+              {!courses.length ? <li className="px-3 py-6 text-center text-sm text-muted-foreground">No courses.</li> : null}
+            </ul>
+          )}
         </div>
-      )}
+        <div>{current ? <ReviewsPanel key={current} courseId={current} canModerate={admin} /> : null}</div>
+      </div>
     </div>
   );
 }

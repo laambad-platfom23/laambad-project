@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { legacyCoverUrl } from "@/server/services/courses";
+import { courseCoverUrl } from "@/server/services/courses";
 import { userPhotoUrl } from "@/server/legacy-uploads";
 import { decodeHtmlEntities } from "@/lib/html-entities";
 import { Err } from "@/lib/api/errors";
@@ -79,7 +79,7 @@ export async function overview(userId: string, courseSlug?: string | null) {
       course_title: decodeHtmlEntities(e.course.title),
       course_slug: e.course.slug,
       description: e.course.description || undefined,
-      cover_image_url: legacyCoverUrl(e.course.legacyThumbnailId) ?? undefined,
+      cover_image_url: courseCoverUrl(e.course) ?? undefined,
       instructor_name: e.course.instructor?.name || "",
       instructor_avatar_url: e.course.instructor
         ? userPhotoUrl(e.course.instructor.id, e.course.instructor.avatarUrl) ?? undefined

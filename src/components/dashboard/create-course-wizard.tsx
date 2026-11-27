@@ -38,32 +38,8 @@ const SUBJECT_NONE = "none";
 const LEVELS = ["Beginner", "Intermediate", "Advanced"] as const;
 const LANGUAGES = ["English", "Somali", "Arabic", "Other"] as const;
 
-function buildDescription(input: {
-  body: string;
-  category: string;
-  level: string;
-  estHours: string;
-  language: string;
-  coverUrl: string;
-}) {
-  const lines: string[] = [];
-  const url = input.coverUrl.trim();
-  if (url) {
-    lines.push(`![Course cover](${url})`, "");
-  }
-  const meta: string[] = [];
-  if (input.category) meta.push(`**Subject:** ${input.category}`);
-  if (input.level) meta.push(`**Level:** ${input.level}`);
-  const h = input.estHours.trim();
-  if (h) meta.push(`**Estimated hours:** ${h}`);
-  if (input.language && input.language !== "Other") meta.push(`**Language:** ${input.language}`);
-  if (meta.length) {
-    lines.push(...meta, "", "---", "");
-  }
-  const body = input.body.trim();
-  if (body) lines.push(body);
-  return lines.join("\n").trim();
-}
+/** Wizard level → the course's level field (the Course Builder uses the same values). */
+const LEVEL_VALUE: Record<string, string> = { Beginner: "beginner", Intermediate: "intermediate", Advanced: "expert" };
 
 type Props = {
   open: boolean;
@@ -169,29 +145,24 @@ export function CreateCourseWizard({ open, onOpenChange }: Props) {
     categoryDefaultApplied.current = true;
   }, [open, categories]);
 
-  const categoryName =
-    categoryId === SUBJECT_NONE
-      ? ""
-      : categories.find((c) => c.id === categoryId)?.name ?? "";
-
-  const fullDescription = [summary.trim() && `## Summary\n\n${summary.trim()}`, description.trim()]
-    .filter(Boolean)
-    .join("\n\n");
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      const desc = buildDescription({
-        body: fullDescription,
-        category: categoryName,
-        level,
-        estHours,
-        language,
-        coverUrl,
-      });
+      // A8: summary, level and cover go to the course's own fields (the Course Builder shows and edits
+      // them); before, they were written into the description text and looked lost in the builder.
+      const details = [
+        language && language !== "Other" ? `Language: ${language}` : "",
+        estHours.trim() ? `Estimated time: ${estHours.trim()} hours` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
       const payload = {
         title: title.trim(),
         ...(slug.trim() ? { slug: slug.trim() } : {}),
-        description: desc,
+        description: [description.trim(), details].filter(Boolean).join("\n\n"),
+        excerpt: summary.trim() || null,
+        level: LEVEL_VALUE[level] ?? null,
+        cover_url: coverUrl.trim() || null,
         ...(categoryId !== SUBJECT_NONE ? { category_id: categoryId } : {}),
       };
       const { data: course } = await coursesApi.create(payload);

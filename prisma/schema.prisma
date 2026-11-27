@@ -66,6 +66,9 @@ model User {
   bundleOrders       BundleOrder[]
   liveSessions       LiveSession[]
   googleConnection   GoogleConnection?
+  /// A7
+  lessonNotes        LessonNote[]
+  announcements      CourseAnnouncement[]
 
   @@index([passwordScheme])
   @@map("users")
@@ -199,6 +202,8 @@ model Course {
   sequentialLessons  Boolean   @default(false) @map("sequential_lessons")
   /// A5: certificate design (null = default design)
   certificateTemplateId String? @map("certificate_template_id") @db.Uuid
+  /// A8: cover image of a course made in this app (old-site courses use legacyThumbnailId)
+  coverUrl           String?   @map("cover_url") @db.VarChar(1024)
 
   instructor   User                 @relation("CourseInstructor", fields: [instructorId], references: [id])
   category     CourseCategory?      @relation(fields: [categoryId], references: [id])
@@ -220,6 +225,11 @@ model Course {
   requiredBy    CoursePrerequisite[] @relation("PrereqRequired")
   bundleLinks   BundleCourse[]
   liveSessions  LiveSession[]
+  /// A6: files / links added in the Course Builder
+  resources     CourseResource[]
+  /// A7: student notes and course announcements
+  notes         LessonNote[]
+  announcements CourseAnnouncement[]
   certificateTemplate CertificateTemplate? @relation(fields: [certificateTemplateId], references: [id])
 
   @@index([instructorId, status])
@@ -260,6 +270,7 @@ model Section {
   course  Course   @relation(fields: [courseId], references: [id])
   lessons Lesson[]
   quizzes Quiz[]
+  assignments Assignment[]
 
   @@index([courseId, sortOrder])
   @@map("sections")
@@ -287,6 +298,12 @@ model Lesson {
   section   Section          @relation(fields: [sectionId], references: [id])
   progress  LessonProgress[]
   questions LessonQuestion[]
+  /// A6: quizzes / assignments / resources shown under this lesson
+  quizzes     Quiz[]
+  assignments Assignment[]
+  resources   CourseResource[]
+  /// A7: students' notes on this lesson
+  notes       LessonNote[]
 
   @@index([sectionId, sortOrder])
   @@index([vdocipherVideoId])
@@ -383,10 +400,19 @@ model Assignment {
   attachmentsJson String? @map("attachments_json") @db.Text
   published   Boolean   @default(false)
   legacyWpId  BigInt?   @unique @map("legacy_wp_id")
+  /// A6: placement in the curriculum (no topic = not shown to students)
+  sectionId   String?   @map("section_id") @db.Uuid
+  lessonId    String?   @map("lesson_id") @db.Uuid
+  /// A6: order among the quizzes / assignments of the same lesson (shared sequence)
+  sortOrder   Int       @default(0) @map("sort_order")
 
   course      Course       @relation(fields: [courseId], references: [id])
+  section     Section?     @relation(fields: [sectionId], references: [id])
+  lesson      Lesson?      @relation(fields: [lessonId], references: [id])
   submissions Submission[]
 
+  @@index([courseId], map: "assignments_course_idx")
+  @@index([lessonId], map: "assignments_lesson_idx")
   @@map("assignments")
 }
 
@@ -690,13 +716,19 @@ model Quiz {
   published        Boolean   @default(false)
   requiredForCert  Boolean   @default(false) @map("required_for_cert")
   legacyWpId       BigInt?   @unique @map("legacy_wp_id")
+  /// A6: the lesson the quiz is shown under (null = topic-level quiz)
+  lessonId         String?   @map("lesson_id") @db.Uuid
+  /// A6: order among the quizzes / assignments of the same lesson (shared sequence)
+  sortOrder        Int       @default(0) @map("sort_order")
 
   course    Course         @relation(fields: [courseId], references: [id])
   section   Section?       @relation(fields: [sectionId], references: [id])
+  lesson    Lesson?        @relation(fields: [lessonId], references: [id])
   questions QuizQuestion[]
   attempts  QuizAttempt[]
 
   @@index([courseId])
+  @@index([lessonId], map: "quizzes_lesson_idx")
   @@map("quizzes")
 }
 
@@ -1171,4 +1203,69 @@ model GoogleConnection {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("google_connections")
+}
+
+/// A6: a file (Vercel Blob) or a link added in the Course Builder, under a lesson or for the whole course.
+/// The old site's files stay in src/server/data/legacy-resources.json (S3 bucket of the old site).
+model CourseResource {
+  id        String    @id @db.Uuid
+  courseId  String    @map("course_id") @db.Uuid
+  lessonId  String?   @map("lesson_id") @db.Uuid
+  title     String    @db.VarChar(255)
+  kind      String    @default("file") @db.VarChar(8)
+  url       String    @db.VarChar(2048)
+  fileName  String?   @map("file_name") @db.VarChar(255)
+  mime      String?   @db.VarChar(128)
+  size      BigInt?
+  sortOrder Int       @default(0) @map("sort_order")
+  createdBy String?   @map("created_by") @db.Uuid
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime  @default(now()) @map("updated_at") @db.Timestamptz()
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz()
+
+  course Course  @relation(fields: [courseId], references: [id])
+  lesson Lesson? @relation(fields: [lessonId], references: [id])
+
+  @@index([courseId, lessonId], map: "course_resources_course_idx")
+  @@map("course_resources")
+}
+
+/// A7: a note a student writes under a lesson video (private to the student).
+model LessonNote {
+  id           String    @id @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  courseId     String    @map("course_id") @db.Uuid
+  lessonId     String    @map("lesson_id") @db.Uuid
+  body         String    @db.Text
+  /// video position when the note was written ("at 03:25")
+  positionSecs Int?      @map("position_secs")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt    DateTime  @default(now()) @map("updated_at") @db.Timestamptz()
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz()
+
+  user   User   @relation(fields: [userId], references: [id])
+  course Course @relation(fields: [courseId], references: [id])
+  lesson Lesson @relation(fields: [lessonId], references: [id])
+
+  @@index([userId, courseId, createdAt(sort: Desc)], map: "lesson_notes_user_idx")
+  @@map("lesson_notes")
+}
+
+/// A7: an announcement from the course staff to the course's students (26 imported from the old site).
+model CourseAnnouncement {
+  id         String    @id @db.Uuid
+  courseId   String    @map("course_id") @db.Uuid
+  authorId   String?   @map("author_id") @db.Uuid
+  title      String    @db.VarChar(255)
+  body       String    @db.Text
+  legacyWpId BigInt?   @unique @map("legacy_wp_id")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt  DateTime  @default(now()) @map("updated_at") @db.Timestamptz()
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz()
+
+  course Course @relation(fields: [courseId], references: [id])
+  author User?  @relation(fields: [authorId], references: [id])
+
+  @@index([courseId, createdAt(sort: Desc)], map: "course_announcements_course_idx")
+  @@map("course_announcements")
 }

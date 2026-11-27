@@ -5,6 +5,12 @@ export type CourseQuiz = {
   id: string;
   course_id: string;
   section_id: string | null;
+  /** A6: where the quiz sits in the curriculum */
+  section_title?: string | null;
+  lesson_id?: string | null;
+  lesson_title?: string | null;
+  /** A6: sequential course, earlier lessons not completed yet */
+  locked?: boolean;
   title: string;
   question_count: number;
   time_limit_secs: number;
@@ -19,6 +25,8 @@ export type QuizInfo = {
   id: string;
   title: string;
   description: string | null;
+  section_id?: string | null;
+  lesson_id?: string | null;
   course: { id: string; slug: string; title: string };
   time_limit_secs: number;
   pass_percent: number;

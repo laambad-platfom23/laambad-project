@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Award,
@@ -74,6 +74,7 @@ export function QuizPlayer({ quizId, onClose }: { quizId: string; onClose?: () =
         onSubmitted={(r) => {
           qc.invalidateQueries({ queryKey: ["quiz-play", quizId] });
           qc.invalidateQueries({ queryKey: ["course-quizzes"] });
+          qc.invalidateQueries({ queryKey: ["learning-items"] });
           qc.invalidateQueries({ queryKey: ["my-streak"] });
           setPhase({ kind: "result", result: r });
         }}
@@ -84,7 +85,8 @@ export function QuizPlayer({ quizId, onClose }: { quizId: string; onClose?: () =
     return (
       <QuizResultView
         result={phase.result}
-        onRetry={info.data && (info.data.attempts_left === null || (info.data.attempts_left ?? 0) > 0) && !phase.result.passed ? start : undefined}
+        // attempts_left comes with the result (counted after this attempt), not from the intro screen
+        onRetry={(phase.result.attempts_left === null || phase.result.attempts_left > 0) && !phase.result.passed ? start : undefined}
         onBack={() => {
           info.refetch();
           setPhase({ kind: "intro" });
@@ -120,6 +122,8 @@ export function QuizPlayer({ quizId, onClose }: { quizId: string; onClose?: () =
           </Button>
         ) : null}
       </div>
+
+      {q.description ? <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">{q.description}</p> : null}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Questions" value={String(q.question_count)} />
@@ -214,6 +218,10 @@ function QuizTaking({
   const [index, setIndex] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [left, setLeft] = useState<number | null>(null);
+  // the countdown's auto-submit runs from an effect created once: it must read the LATEST answers
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     try {
@@ -224,14 +232,16 @@ function QuizTaking({
   }, [answers, storeKey]);
 
   const submit = async (auto = false) => {
-    if (submitting) return;
-    const unanswered = attempt.questions.filter((q) => !(answers[q.id]?.length)).length;
+    if (submittingRef.current) return;
+    const current = answersRef.current;
+    const unanswered = attempt.questions.filter((q) => !(current[q.id]?.length)).length;
     if (!auto && unanswered && !window.confirm(`${unanswered} question(s) not answered. Submit anyway?`)) return;
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const { data } = await quizPlayApi.submit(
         attempt.attempt_id,
-        attempt.questions.map((q) => ({ question_id: q.id, keys: answers[q.id] ?? [] }))
+        attempt.questions.map((q) => ({ question_id: q.id, keys: answersRef.current[q.id] ?? [] }))
       );
       try {
         localStorage.removeItem(storeKey);
@@ -242,6 +252,7 @@ function QuizTaking({
       onSubmitted(data);
     } catch (e) {
       toast.error(getApiErrorMessage(e, "Could not submit the quiz"));
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };

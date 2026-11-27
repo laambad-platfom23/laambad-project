@@ -11,7 +11,7 @@ import { isWaafiPayConfigured, normalizeSomaliMobile, waafiPurchase } from "@/se
 import { findBestEnrollment, hasCourseAccess } from "@/server/enrollment-status";
 import { assertUuid, isUuid } from "@/lib/uuid";
 import { decodeHtmlEntities } from "@/lib/html-entities";
-import { legacyCoverUrl } from "./courses";
+import { courseCoverUrl } from "./courses";
 import { withLegacyPrice } from "@/server/legacy-prices";
 import { slugify } from "./learning-paths";
 import { notify } from "@/server/notify";
@@ -32,6 +32,7 @@ async function load(where: { id?: string; slug?: string }) {
               status: true,
               deletedAt: true,
               legacyThumbnailId: true,
+              coverUrl: true,
               instructor: { select: { name: true } },
               pricing: { where: { isActive: true, deletedAt: null }, take: 1 },
             },
@@ -56,7 +57,7 @@ function view(b: BundleRow, extra?: { owned?: boolean; pending?: boolean; owned_
         slug: bc.course.slug,
         status: bc.course.status,
         instructor_name: bc.course.instructor?.name ?? null,
-        cover_url: legacyCoverUrl(bc.course.legacyThumbnailId),
+        cover_url: courseCoverUrl(bc.course),
         price: p ? (p.isFree ? 0 : toMinor(p.discountPrice ?? p.price)) : 0,
       };
     });

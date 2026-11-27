@@ -32,6 +32,10 @@ import {
   Video,
   Medal,
   Layers,
+  FolderOpen,
+  NotebookPen,
+  Megaphone,
+  Star,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { paymentsApi } from "@/services/api/payments";
@@ -71,6 +75,10 @@ const studentNavItems: NavItem[] = [
   { label: "Browse catalog", href: "/courses", icon: Library },
   { label: "Quizzes", href: "/dashboard/quizzes", icon: BrainCircuit },
   { label: "Assignments", href: "/dashboard/assignments", icon: ClipboardList },
+  { label: "Resources", href: "/dashboard/resources", icon: FolderOpen },
+  { label: "My notebook", href: "/dashboard/notes", icon: NotebookPen },
+  { label: "Announcements", href: "/dashboard/announcements", icon: Megaphone },
+  { label: "Reviews", href: "/dashboard/reviews", icon: Star },
   { label: "Certificates", href: "/dashboard/certificates", icon: Award },
   { label: "Payments", href: "/dashboard/payments", icon: CreditCard },
   { label: "Notifications", href: "/dashboard/notifications", icon: Bell },
@@ -131,6 +139,7 @@ const staffNavItems: NavItem[] = [
   { label: "Group discussion", href: "/dashboard/discussions", icon: MessagesSquare },
   { label: "WhatsApp", href: "/dashboard/whatsapp", icon: MessageCircle, visible: (u) => isAdminUser(u) },
   { label: "Reviews", href: "/dashboard/reviews", icon: MessageSquare },
+  { label: "Announcements", href: "/dashboard/announcements", icon: Megaphone },
   {
     label: "Users",
     href: "/dashboard/users",

@@ -17,6 +17,19 @@ import { assertUuid } from "@/lib/uuid";
 import { recordLearningActivity } from "./learning";
 import staleAnswers from "@/server/data/legacy-stale-quiz-answers.json";
 import { plain } from "@/lib/plain-text";
+import {
+  assertItemOpen,
+  byPlace,
+  courseContext,
+  isLocked,
+  locksFor,
+  outline,
+  placeIndex,
+  placeOf,
+  type CourseCtx,
+  type Locks,
+  type Outline,
+} from "./curriculum";
 
 /** Old Tutor answers that belonged to another question type: Tutor never showed them, so neither do we. */
 const STALE = new Set<number>((staleAnswers as { ids: number[] }).ids);
@@ -75,7 +88,7 @@ async function loadQuiz(quizId: string) {
   const quiz = await prisma.quiz.findFirst({
     where: { id: quizId, deletedAt: null },
     include: {
-      course: { select: { id: true, slug: true, title: true, instructorId: true } },
+      course: { select: { id: true, slug: true, title: true, instructorId: true, sequentialLessons: true } },
       questions: { where: { deletedAt: null }, orderBy: { sortOrder: "asc" } },
     },
   });
@@ -111,40 +124,52 @@ async function attemptSummary(userId: string, quizId: string, maxAttempts: numbe
   };
 }
 
-/** The quizzes of a course for a student (published only), with their attempt status. */
-export async function courseQuizzes(user: AuthUser, courseId: string) {
-  assertUuid(courseId, "course not found");
-  const course = await prisma.course.findFirst({ where: { id: courseId, deletedAt: null }, select: { id: true, instructorId: true } });
-  if (!course) throw Err.notFound("course not found");
-  await access(user, course);
+/**
+ * The quizzes of a course for a student (published only), in curriculum order, with their attempt
+ * status and where they sit (A6: under a lesson, or at the top of a topic). Quizzes of a deleted
+ * topic are not listed. `pre` lets the learn page reuse one access check for all its lists.
+ */
+export async function courseQuizzes(user: AuthUser, courseId: string, pre?: { ctx: CourseCtx; out: Outline; locks: Locks }) {
+  const ctx = pre?.ctx ?? (await courseContext(user, courseId, "member"));
+  const out = pre?.out ?? (await outline(ctx.id));
+  const locks = pre?.locks ?? (await locksFor(user, ctx, out));
+  const idx = placeIndex(out);
   const quizzes = await prisma.quiz.findMany({
-    where: { courseId, deletedAt: null, published: true },
-    include: { section: { select: { sortOrder: true } }, _count: { select: { questions: { where: { deletedAt: null } } } } },
+    where: { courseId: ctx.id, deletedAt: null, published: true },
+    include: { _count: { select: { questions: { where: { deletedAt: null } } } } },
+    orderBy: [{ createdAt: "asc" }, { title: "asc" }],
   });
+  const visible = quizzes
+    .map((q) => ({ q, place: placeOf(idx, q), sortOrder: q.sortOrder, createdAt: q.createdAt }))
+    .filter(({ q, place }) => place.placed || !q.sectionId) // a quiz without any topic is listed at the end
+    .sort(byPlace);
   const attempts = await prisma.quizAttempt.findMany({
-    where: { userId: user.user_id, quizId: { in: quizzes.map((q) => q.id) }, deletedAt: null },
+    where: { userId: user.user_id, quizId: { in: visible.map((v) => v.q.id) }, deletedAt: null },
     select: { quizId: true, finishedAt: true, percent: true, passed: true },
   });
-  return quizzes
-    .sort((a, b) => Number(a.section?.sortOrder ?? 0) - Number(b.section?.sortOrder ?? 0) || a.title.localeCompare(b.title))
-    .map((q) => {
-      const mine = attempts.filter((a) => a.quizId === q.id);
-      const done = mine.filter((a) => a.finishedAt);
-      const maxAttempts = Number(q.maxAttempts);
-      return {
-        id: q.id,
-        course_id: q.courseId,
-        section_id: q.sectionId,
-        title: q.title,
-        question_count: q._count.questions,
-        time_limit_secs: Number(q.timeLimitSecs),
-        pass_percent: Number(q.passPercent),
-        max_attempts: maxAttempts,
-        attempts_used: mine.length,
-        best_percent: done.length ? Math.max(...done.map((a) => Number(a.percent))) : null,
-        passed: done.some((a) => a.passed),
-      };
-    });
+  return visible.map(({ q, place }) => {
+    const mine = attempts.filter((a) => a.quizId === q.id);
+    const done = mine.filter((a) => a.finishedAt);
+    const maxAttempts = Number(q.maxAttempts);
+    return {
+      id: q.id,
+      course_id: q.courseId,
+      section_id: place.section_id,
+      section_title: place.section_title,
+      lesson_id: place.lesson_id,
+      lesson_title: place.lesson_title,
+      sort_order: q.sortOrder,
+      title: q.title,
+      question_count: q._count.questions,
+      time_limit_secs: Number(q.timeLimitSecs),
+      pass_percent: Number(q.passPercent),
+      max_attempts: maxAttempts,
+      attempts_used: mine.length,
+      best_percent: done.length ? Math.max(...done.map((a) => Number(a.percent))) : null,
+      passed: done.some((a) => a.passed),
+      locked: isLocked(locks, place),
+    };
+  });
 }
 
 /** One quiz ready to take: questions and options WITHOUT the answers. */
@@ -156,7 +181,10 @@ export async function quizForTaking(user: AuthUser, quizId: string) {
   return {
     id: quiz.id,
     title: quiz.title,
-    description: quiz.description,
+    // migrated descriptions can be WordPress HTML: plain text only (never rendered as HTML)
+    description: plain(quiz.description) || null,
+    section_id: quiz.sectionId,
+    lesson_id: quiz.lessonId,
     course: { id: quiz.course.id, slug: quiz.course.slug, title: quiz.course.title },
     time_limit_secs: Number(quiz.timeLimitSecs),
     pass_percent: Number(quiz.passPercent),
@@ -182,6 +210,10 @@ export async function startAttempt(user: AuthUser, quizId: string, meta?: { ip?:
   const { staff } = await access(user, quiz.course);
   if (!quiz.published && !staff) throw Err.notFound("quiz not found");
   if (!quiz.questions.length) throw Err.conflict("quiz_empty", "this quiz has no questions yet");
+  // A6: in a sequential course the quiz opens together with its lesson
+  if (!staff && quiz.course.sequentialLessons) {
+    await assertItemOpen(user, { ...quiz.course, staff }, { sectionId: quiz.sectionId, lessonId: quiz.lessonId });
+  }
   const maxAttempts = Number(quiz.maxAttempts);
   const limit = Number(quiz.timeLimitSecs);
   const t = now();

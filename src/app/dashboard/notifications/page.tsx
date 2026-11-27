@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { notificationsApi } from "@/services/api/notifications";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,7 +36,7 @@ export default function NotificationsPage() {
   });
 
   const notifications: Notification[] = Array.isArray(data) ? data : (data?.data || []);
-  const unreadCount = notifications.filter((n) => !n.read).length;
+  const unreadCount = notifications.filter((n) => !n.read_at && !n.read).length;
 
   return (
     <div className="space-y-6">
@@ -74,28 +75,43 @@ export default function NotificationsPage() {
         </div>
       ) : (
         <div className="space-y-2">
-          {notifications.map((notification: Notification) => (
+          {notifications.map((notification: Notification) => {
+            // the API sends read_at; a link (site path only) opens the page the notification is about
+            const isRead = !!notification.read_at || !!notification.read;
+            const link = notification.meta?.link;
+            const href = link && link.startsWith("/") && !link.startsWith("//") ? link : null;
+            return (
             <Card
               key={notification.id}
-              className={`transition-all ${!notification.read ? "border-secondary/50 bg-secondary/5" : ""}`}
+              className={`transition-all ${!isRead ? "border-secondary/50 bg-secondary/5" : ""}`}
             >
               <CardContent className="p-4">
                 <div className="flex items-start gap-3">
                   <div className="mt-1">
-                    {notification.read ? (
+                    {isRead ? (
                       <Circle className="h-2 w-2 text-muted-foreground/30" />
                     ) : (
                       <Circle className="h-2 w-2 fill-secondary text-secondary" />
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium">{notification.title}</p>
+                    {href ? (
+                      <Link
+                        href={href}
+                        onClick={() => !isRead && markOneMutation.mutate(notification.id)}
+                        className="text-sm font-medium hover:underline"
+                      >
+                        {notification.title}
+                      </Link>
+                    ) : (
+                      <p className="text-sm font-medium">{notification.title}</p>
+                    )}
                     <p className="text-sm text-muted-foreground mt-0.5">{notification.body}</p>
                     <p className="text-xs text-muted-foreground mt-2">
                       {formatDate(notification.created_at)}
                     </p>
                   </div>
-                  {!notification.read && (
+                  {!isRead && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -108,7 +124,8 @@ export default function NotificationsPage() {
                 </div>
               </CardContent>
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

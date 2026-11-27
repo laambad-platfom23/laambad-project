@@ -28,6 +28,21 @@ export function legacyCoverUrl(legacyThumbnailId: bigint | null | undefined): st
   return path ? localLegacyUpload(path) : null;
 }
 
+/** A8: the cover set in this app wins; old-site courses use their WordPress featured image. */
+export function courseCoverUrl(c: { coverUrl?: string | null; legacyThumbnailId?: bigint | null }): string | null {
+  return c.coverUrl?.trim() || legacyCoverUrl(c.legacyThumbnailId);
+}
+
+/** A cover address: an uploaded image (https) or a file of this site (/…), nothing else. */
+function cleanCoverUrl(v: unknown): string | null {
+  const s = String(v ?? "").trim();
+  if (!s) return null;
+  if (s.length > 1024) throw Err.invalidInput("the cover image address is too long");
+  if (/^https:\/\//i.test(s) || (/^\/[^/]/.test(s) && !s.includes(".."))) return s;
+  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(s)) return s; // local development uploads
+  throw Err.invalidInput("the cover must be an uploaded image");
+}
+
 /**
  * Old-site upload URLs inside descriptions → local copy when we have it. Files that are in neither the
  * site backup nor S3 (deleted on the old site) are dropped instead of linking to laambad.com.
@@ -172,6 +187,7 @@ export async function mapCourse(
     categoryId: string | null;
     status: string;
     legacyThumbnailId?: bigint | null;
+    coverUrl?: string | null;
     excerpt?: string | null;
     level?: string | null;
     priceType?: string | null;
@@ -235,7 +251,9 @@ export async function mapCourse(
     slug: course.slug,
     description: course.description || undefined,
     ...descriptionFields(course.description),
-    cover_image_url: legacyCoverUrl(course.legacyThumbnailId) ?? undefined,
+    cover_image_url: courseCoverUrl(course) ?? undefined,
+    // A8: the cover chosen in this app (staff edit it in the Course Builder)
+    ...(opts?.redactLessons ? {} : { cover_url: course.coverUrl ?? null }),
     instructor_id: course.instructorId,
     category_id: course.categoryId || undefined,
     categories,
@@ -524,17 +542,34 @@ function canManage(user: AuthUser, instructorId: string) {
   return user.role === "admin" || user.user_id === instructorId;
 }
 
+const COURSE_LEVELS = ["all_levels", "beginner", "intermediate", "expert"];
+
 export async function create(
   user: AuthUser,
-  input: { title: string; slug?: string; description?: string; category_id?: string }
+  input: {
+    title: string;
+    slug?: string;
+    description?: string;
+    category_id?: string;
+    excerpt?: string | null;
+    level?: string | null;
+    cover_url?: string | null;
+  }
 ) {
   if (user.role !== "admin" && user.role !== "instructor") throw Err.forbidden();
-  const title = input.title.trim();
+  const title = String(input.title ?? "").trim();
   if (!title) throw Err.invalidInput("title required");
-  let slug = (input.slug || toSlug(title)).trim();
-  if (!slug) slug = toSlug(title);
-  const exists = await prisma.course.findFirst({ where: { slug, deletedAt: null } });
+  if (title.length > 255) throw Err.invalidInput("the title is too long (max 255 characters)");
+  // the URL column holds 220 characters; keep room for a "-abc123" suffix
+  let slug = toSlug(String(input.slug || title).trim()).slice(0, 200).replace(/-+$/g, "");
+  if (!slug) slug = `course-${newId().slice(0, 8)}`;
+  // a deleted course still owns its URL (the column is unique): check every course, not only live ones
+  const exists = await prisma.course.findFirst({ where: { slug }, select: { id: true } });
   if (exists) slug = `${slug}-${newId().slice(0, 6)}`;
+  if (input.category_id && !isUuid(input.category_id)) throw Err.invalidInput("invalid category");
+  if (input.level && !COURSE_LEVELS.includes(input.level)) throw Err.invalidInput("invalid level");
+  const excerpt = String(input.excerpt ?? "").trim();
+  if (excerpt.length > 2000) throw Err.invalidInput("the summary is too long");
   const t = now();
   const id = newId();
   await prisma.course.create({
@@ -543,6 +578,9 @@ export async function create(
       title,
       slug,
       description: input.description || null,
+      excerpt: excerpt || null,
+      level: input.level || null,
+      coverUrl: cleanCoverUrl(input.cover_url),
       instructorId: user.user_id,
       categoryId: input.category_id || null,
       status: "draft",
@@ -550,6 +588,14 @@ export async function create(
       updatedAt: t,
     },
   });
+  if (input.category_id) {
+    // the catalog counts courses through the category links: keep the primary link in step
+    await prisma.courseCategoryLink.upsert({
+      where: { courseId_categoryId: { courseId: id, categoryId: input.category_id } },
+      create: { courseId: id, categoryId: input.category_id, isPrimary: true },
+      update: { isPrimary: true },
+    });
+  }
   return getById(id);
 }
 
@@ -571,16 +617,25 @@ export async function update(
     /** A5 */
     sequential_lessons: boolean;
     certificate_template_id: string | null;
+    /** A8 */
+    cover_url: string | null;
   }>
 ) {
   const course = await prisma.course.findFirst({ where: { id: courseId, deletedAt: null } });
   if (!course) throw Err.notFound("course not found");
   if (!canManage(user, course.instructorId)) throw Err.forbidden();
-  const slug = input.slug?.trim();
-  if (slug) {
+  if (input.title !== undefined && String(input.title).trim().length > 255) {
+    throw Err.invalidInput("the title is too long (max 255 characters)");
+  }
+  // an unchanged URL is kept as it is (old-site addresses); a new one is cleaned up and must be free
+  let slug = input.slug?.trim();
+  if (slug && slug !== course.slug) {
+    slug = toSlug(slug);
     const clash = await prisma.course.findFirst({ where: { slug, id: { not: courseId } }, select: { id: true } });
     if (clash) throw Err.conflict("slug_taken", "another course already uses this URL slug");
   }
+  if (input.category_id && !isUuid(input.category_id)) throw Err.invalidInput("invalid category");
+  const coverUrl = input.cover_url === undefined ? undefined : cleanCoverUrl(input.cover_url);
   const opt = (v: string | null | undefined) => (v === undefined ? undefined : v?.trim() ? v : null);
   const LEVELS = ["all_levels", "beginner", "intermediate", "expert"];
   if (input.certificate_template_id) {
@@ -605,6 +660,7 @@ export async function update(
       isPublic: input.is_public === undefined ? undefined : !!input.is_public,
       sequentialLessons: input.sequential_lessons === undefined ? undefined : !!input.sequential_lessons,
       certificateTemplateId: input.certificate_template_id === undefined ? undefined : input.certificate_template_id || null,
+      coverUrl,
       updatedAt: now(),
     },
   });
@@ -983,10 +1039,18 @@ export async function deleteLesson(user: AuthUser, lessonId: string) {
   });
   if (!lesson) throw Err.notFound("lesson not found");
   if (!canManage(user, lesson.section.course.instructorId)) throw Err.forbidden();
-  await prisma.lesson.update({
-    where: { id: lessonId },
-    data: { deletedAt: now(), updatedAt: now() },
-  });
+  const t = now();
+  await prisma.$transaction([
+    prisma.lesson.update({
+      where: { id: lessonId },
+      data: { deletedAt: t, updatedAt: t },
+    }),
+    // A6: the lesson's quizzes and assignments (with their attempts / submissions) stay in the topic;
+    // its own files and links go with it
+    prisma.quiz.updateMany({ where: { lessonId, deletedAt: null }, data: { lessonId: null, updatedAt: t } }),
+    prisma.assignment.updateMany({ where: { lessonId, deletedAt: null }, data: { lessonId: null, updatedAt: t } }),
+    prisma.courseResource.updateMany({ where: { lessonId, deletedAt: null }, data: { deletedAt: t, updatedAt: t } }),
+  ]);
 }
 
 /**

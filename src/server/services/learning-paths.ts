@@ -5,7 +5,7 @@
 import { prisma, newId, now } from "@/lib/db";
 import { Err } from "@/lib/api/errors";
 import type { AuthUser } from "@/lib/auth/request";
-import { legacyCoverUrl } from "./courses";
+import { courseCoverUrl } from "./courses";
 import { decodeHtmlEntities } from "@/lib/html-entities";
 import { hasCourseAccess } from "@/server/enrollment-status";
 import { assertUuid, isUuid } from "@/lib/uuid";
@@ -63,8 +63,8 @@ async function loadPath(where: { id?: string; slug?: string }) {
 
 async function coverMap(courseIds: string[]) {
   // course covers: uploaded thumbnail (site setting style) is not modelled; use the legacy cover
-  const rows = await prisma.course.findMany({ where: { id: { in: courseIds } }, select: { id: true, legacyThumbnailId: true } });
-  return new Map(rows.map((r) => [r.id, legacyCoverUrl(r.legacyThumbnailId)]));
+  const rows = await prisma.course.findMany({ where: { id: { in: courseIds } }, select: { id: true, legacyThumbnailId: true, coverUrl: true } });
+  return new Map(rows.map((r) => [r.id, courseCoverUrl(r)]));
 }
 
 /** Student progress per course of a path (lessons done / total, finished, has access). */

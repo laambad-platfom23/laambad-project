@@ -1,24 +1,32 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, Circle, Lock, Play } from "lucide-react";
+import { Award, BrainCircuit, Check, ChevronDown, Circle, ClipboardList, Lock, Paperclip, Play } from "lucide-react";
 import type { Course, Lesson, Section } from "@/types";
+import type { LearnAssignment, LearnQuiz } from "@/services/api/course-items";
+import { mergeByOrder, type ItemMaps } from "@/components/learning/learn-panels";
 import { cn } from "@/lib/utils";
 
 export type SectionGroup = { section: Section; lessons: Lesson[] };
 
-export function buildSectionGroups(course: Course | undefined): SectionGroup[] {
+/**
+ * Topics in order with their lessons. A topic without lessons is kept when `keep` says it has other
+ * items (A6: e.g. a "Final exam" topic that only holds a quiz) — before, such quizzes never showed.
+ */
+export function buildSectionGroups(course: Course | undefined, keep?: (sectionId: string) => boolean): SectionGroup[] {
   if (!course?.sections?.length) return [];
   const sections = [...course.sections].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
   const out: SectionGroup[] = [];
   for (const sec of sections) {
     const lessons = [...(sec.lessons ?? [])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-    if (lessons.length) out.push({ section: sec, lessons });
+    if (lessons.length || keep?.(sec.id)) out.push({ section: sec, lessons });
   }
   return out;
 }
 
 type ProgressEntry = { completed: boolean; percent: number };
+
+export type ActiveItem = { kind: "quiz" | "assignment"; id: string } | null;
 
 type Props = {
   groups: SectionGroup[];
@@ -29,7 +37,73 @@ type Props = {
   onSelectLesson: (id: string) => void;
   /** `panel` = edge-to-edge LMS column (full height, no outer radius on large screens). */
   variant?: "embedded" | "panel";
+  /** A6: quizzes / assignments / resources under their lesson (and topic-level ones) */
+  maps?: ItemMaps;
+  activeItem?: ActiveItem;
+  onOpenQuiz?: (id: string) => void;
+  onOpenAssignment?: (id: string) => void;
+  /** shown under the list (the "More" menu) */
+  footer?: React.ReactNode;
 };
+
+/** A quiz / assignment row under its lesson (or at the top of a topic). */
+function ItemRow({
+  kind,
+  item,
+  active,
+  onOpen,
+}: {
+  kind: "quiz" | "assignment";
+  item: LearnQuiz | LearnAssignment;
+  active: boolean;
+  onOpen: () => void;
+}) {
+  const done = kind === "quiz" ? (item as LearnQuiz).passed : (item as LearnAssignment).status !== "not_submitted";
+  const Icon = kind === "quiz" ? BrainCircuit : ClipboardList;
+  let meta: string;
+  if (kind === "quiz") {
+    const q = item as LearnQuiz;
+    meta = q.best_percent !== null ? `Quiz · best ${Math.round(q.best_percent)}%${q.passed ? " · passed" : ""}` : `Quiz · ${q.question_count} questions`;
+  } else {
+    const a = item as LearnAssignment;
+    meta =
+      a.status === "graded"
+        ? `Assignment · ${a.grade} / ${a.max_points}`
+        : a.status === "submitted"
+          ? "Assignment · submitted"
+          : `Assignment · ${a.max_points} points`;
+  }
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-current={active ? "true" : undefined}
+        className={cn(
+          "group flex w-full items-center gap-2.5 rounded-lg py-2 pl-3 pr-2 text-left transition-all",
+          active ? "bg-brand/[0.08] ring-1 ring-brand/30 dark:bg-brand/15" : "hover:bg-[#0B1F3A]/[0.05] dark:hover:bg-white/5",
+          item.locked && "opacity-60",
+        )}
+      >
+        <span
+          className={cn(
+            "flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md",
+            done ? "bg-success text-white" : kind === "quiz" ? "bg-brand-soft text-brand" : "bg-[#0B1F3A]/10 text-[#0B1F3A] dark:bg-white/10 dark:text-white",
+          )}
+          aria-hidden
+        >
+          {item.locked ? <Lock className="h-3 w-3" /> : done ? (kind === "quiz" ? <Award className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" strokeWidth={3} />) : <Icon className="h-3.5 w-3.5" />}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className={cn("line-clamp-2 text-[13.5px] leading-snug", active ? "font-semibold text-[#0f172a] dark:text-white" : "text-[#1e293b] dark:text-white/85")}>
+            {item.title}
+          </span>
+          <span className="block text-[11.5px] text-muted-foreground">{meta}</span>
+        </span>
+      </button>
+    </li>
+  );
+}
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -79,13 +153,43 @@ export function CourseCurriculumSidebar({
   polishLessonTitle,
   onSelectLesson,
   variant = "embedded",
+  maps,
+  activeItem = null,
+  onOpenQuiz,
+  onOpenAssignment,
+  footer,
 }: Props) {
   const activeSectionId = useMemo(() => {
+    if (activeItem && maps) {
+      // an open quiz / assignment keeps its topic open
+      for (const [sid, v] of maps.bySection) {
+        if ([...v.quizzes, ...v.assignments].some((x) => x.id === activeItem.id)) return sid;
+      }
+      for (const g of groups) {
+        for (const l of g.lessons) {
+          const e = maps.byLesson.get(l.id);
+          if (e && [...e.quizzes, ...e.assignments].some((x) => x.id === activeItem.id)) return g.section.id;
+        }
+      }
+    }
     for (const g of groups) {
       if (g.lessons.some((l) => l.id === activeLessonId)) return g.section.id;
     }
     return null;
-  }, [groups, activeLessonId]);
+  }, [groups, activeLessonId, activeItem, maps]);
+
+  const openItem = (kind: "quiz" | "assignment", id: string) => (kind === "quiz" ? onOpenQuiz?.(id) : onOpenAssignment?.(id));
+  // quizzes and assignments of one lesson share one order (as on the old site)
+  const itemRows = (quizzes: LearnQuiz[], assignments: LearnAssignment[]) =>
+    mergeByOrder(quizzes, assignments).map((x) => (
+      <ItemRow
+        key={x.item.id}
+        kind={x.kind}
+        item={x.item}
+        active={activeItem?.id === x.item.id}
+        onOpen={() => openItem(x.kind, x.item.id)}
+      />
+    ));
 
   const [open, setOpen] = useState<Record<string, boolean>>({});
   useEffect(() => {
@@ -173,8 +277,18 @@ export function CourseCurriculumSidebar({
                     {section.title}
                   </span>
                   <span className="mt-0.5 block text-[11.5px] tabular-nums text-muted-foreground">
-                    {doneCount}/{lessons.length} {lessons.length === 1 ? "lesson" : "lessons"}
-                    {secs ? ` · ${clock(secs).replace(" mins", "")}` : ""}
+                    {lessons.length ? (
+                      <>
+                        {doneCount}/{lessons.length} {lessons.length === 1 ? "lesson" : "lessons"}
+                        {secs ? ` · ${clock(secs).replace(" mins", "")}` : ""}
+                      </>
+                    ) : (
+                      (() => {
+                        const t = maps?.bySection.get(section.id);
+                        const n = (t?.quizzes.length ?? 0) + (t?.assignments.length ?? 0);
+                        return `${n} ${t?.quizzes.length && !t.assignments.length ? (n === 1 ? "quiz" : "quizzes") : n === 1 ? "activity" : "activities"}`;
+                      })()
+                    )}
                   </span>
                 </span>
                 <ChevronDown
@@ -191,11 +305,16 @@ export function CourseCurriculumSidebar({
               >
                 <div className="min-h-0 overflow-hidden">
                   <ul className="mb-2 ml-[21px] border-l-2 border-[#0B1F3A]/10 pl-3 dark:border-white/10">
+                    {maps?.bySection.get(section.id)
+                      ? itemRows(maps.bySection.get(section.id)!.quizzes, maps.bySection.get(section.id)!.assignments)
+                      : null}
                     {lessons.map((lesson) => {
-                      const isActive = lesson.id === activeLessonId;
+                      const isActive = lesson.id === activeLessonId && !activeItem;
                       const done = isDone(progressByLesson.get(lesson.id));
                       const dur = clock(lessonSeconds(lesson));
                       const kind = lesson.video_provider || lesson.has_vdocipher || lesson.video_url ? "Video" : "Lesson";
+                      const extras = maps?.byLesson.get(lesson.id);
+                      const fileCount = (extras?.files.length ?? 0) + (extras?.links.length ?? 0);
                       return (
                         <li key={lesson.id}>
                           <button
@@ -237,10 +356,21 @@ export function CourseCurriculumSidebar({
                               <span className="mt-1 block text-[12px] tabular-nums text-muted-foreground">
                                 {kind}
                                 {dur ? ` - ${dur}` : ""}
+                                {fileCount ? (
+                                  <span className="ml-1.5 inline-flex items-center gap-0.5" title="Resources in this lesson">
+                                    · <Paperclip className="h-3 w-3" />
+                                    {fileCount}
+                                  </span>
+                                ) : null}
                                 {done ? <span className="ml-1.5 font-medium text-success">· Completed</span> : null}
                               </span>
                             </span>
                           </button>
+                          {extras && (extras.quizzes.length || extras.assignments.length) ? (
+                            <ul className="mb-1 ml-[34px] space-y-0.5 border-l border-dashed border-[#0B1F3A]/15 pl-2 dark:border-white/15">
+                              {itemRows(extras.quizzes, extras.assignments)}
+                            </ul>
+                          ) : null}
                         </li>
                       );
                     })}
@@ -250,7 +380,14 @@ export function CourseCurriculumSidebar({
             </div>
           );
         })}
+        {maps && (maps.loose.quizzes.length || maps.loose.assignments.length) ? (
+          <div className="px-1 py-2">
+            <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">More activities</p>
+            <ul>{itemRows(maps.loose.quizzes, maps.loose.assignments)}</ul>
+          </div>
+        ) : null}
       </div>
+      {footer ? <div className="shrink-0 border-t border-[#0B1F3A]/8 p-2 dark:border-white/10">{footer}</div> : null}
     </div>
   );
 }

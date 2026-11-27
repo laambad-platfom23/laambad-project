@@ -1,6 +1,17 @@
 "use client";
 
 /**
+ * A7 — where the video on screen is now, so a note can say "at 03:25". There is one player on the
+ * page at a time; the learn page resets it when the lesson changes.
+ */
+export const playback = {
+  seconds: 0,
+  reset() {
+    this.seconds = 0;
+  },
+};
+
+/**
  * A2 — counts the seconds of a video that were really PLAYED (not skipped by seeking), so a lesson
  * can complete automatically at 80 %. Works with any player that exposes currentTime + duration.
  */
@@ -19,6 +30,7 @@ export class WatchTracker {
   /** call on every time update (or poll) with the player's position */
   tick(currentTime: number, duration: number) {
     if (!Number.isFinite(currentTime) || !Number.isFinite(duration) || duration <= 0) return;
+    playback.seconds = currentTime;
     this.duration = duration;
     const last = this.last;
     this.last = currentTime;

@@ -52,6 +52,8 @@ export type CourseStatusValue = "published" | "draft" | "pending" | "private" | 
 export type CourseDetailsInput = {
   excerpt?: string | null;
   level?: string | null;
+  /** A8: cover image (uploaded) */
+  cover_url?: string | null;
   benefits?: string | null;
   requirements?: string | null;
   target_audience?: string | null;
@@ -110,7 +112,7 @@ export const coursesApi = {
   updatePricing: (courseId: string, data: UpdateCoursePricingInput) =>
     apiClient.patch<CoursePricing>(`/api/v1/courses/${courseId}/pricing`, data),
 
-  create: (data: CreateCourseInput) =>
+  create: (data: CreateCourseInput & CourseDetailsInput) =>
     apiClient.post<Course>("/api/v1/courses", data),
 
   update: (courseId: string, data: Partial<CreateCourseInput> & CourseDetailsInput) =>

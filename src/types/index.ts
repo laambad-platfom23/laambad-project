@@ -128,6 +128,8 @@ export interface Course {
   categories?: { id: string; name: string; slug: string; is_primary: boolean }[];
   /** Dedicated cover image (migrated featured image). Falls back to the first image in description. */
   cover_image_url?: string | null;
+  /** A8: cover chosen in this app (staff responses; null = old-site featured image / none) */
+  cover_url?: string | null;
   /** Migrated WordPress HTML description as safe render blocks (see `@/lib/wp-content`). */
   description_blocks?: ContentBlock[];
   /** Plain-text summary of an HTML description. */
@@ -281,7 +283,12 @@ export interface Notification {
   user_id: string;
   title: string;
   body: string;
-  read: boolean;
+  /** older shape; the API sends read_at */
+  read?: boolean;
+  read_at?: string | null;
+  type?: string;
+  /** e.g. { link: "/learn/<slug>?tab=announcements" } */
+  meta?: { link?: string } | null;
   created_at: string;
 }
 

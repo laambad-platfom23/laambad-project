@@ -17,7 +17,20 @@ export function siteUrl() {
 
 export type NotifyEvent = {
   userId: string;
-  kind: "enrolled" | "payment_rejected" | "certificate" | "book" | "reminder" | "discussion_reply" | "quiz_passed" | "course_approved" | "course_changes" | "live_session" | "bundle";
+  kind:
+    | "enrolled"
+    | "payment_rejected"
+    | "certificate"
+    | "book"
+    | "reminder"
+    | "discussion_reply"
+    | "quiz_passed"
+    | "course_approved"
+    | "course_changes"
+    | "live_session"
+    | "bundle"
+    | "assignment_submitted"
+    | "assignment_graded";
   ref: string;
   title: string;
   body: string;
