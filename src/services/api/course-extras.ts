@@ -76,7 +76,15 @@ export type MyCourseReview = {
   mine: MyReview | null;
 };
 
+export type PublicReviews = Pick<ReviewSummary, "average" | "count" | "distribution"> & {
+  page: number;
+  has_more: boolean;
+  reviews: { id: string; rating: number; comment: string | null; user: { name: string; avatar_url: string | null }; created_at: string | null }[];
+};
+
 export const courseReviewsApi = {
+  /** anyone: the approved reviews of a published course, 10 per page */
+  publicList: (courseId: string, page = 1) => apiClient.get<PublicReviews>(`/api/courses/${courseId}/reviews`, { params: { page } }),
   summary: (courseId: string) => apiClient.get<ReviewSummary>(`/api/v1/courses/${courseId}/reviews/summary`),
   /** write or update MY review (one per course) */
   save: (courseId: string, data: { rating: number; comment: string }) => apiClient.post<MyReview>(`/api/v1/courses/${courseId}/reviews`, data),

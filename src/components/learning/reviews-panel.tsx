@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, MessageSquareQuote, Pencil, Send, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -40,39 +40,7 @@ export function ReviewsPanel({ courseId, canModerate }: { courseId: string; canM
       {data.reviews.length ? (
         <ul className="divide-y overflow-hidden rounded-2xl border bg-card">
           {data.reviews.map((r) => (
-            <li key={r.id} className="flex gap-4 px-5 py-5 even:bg-muted/30">
-              <div className="w-32 shrink-0 sm:w-40">
-                <Avatar className="h-10 w-10">
-                  {r.user.avatar_url ? <AvatarImage src={r.user.avatar_url} alt="" /> : null}
-                  <AvatarFallback className="bg-[#0B1F3A] text-sm font-semibold text-white">{getInitials(r.user.name)}</AvatarFallback>
-                </Avatar>
-                <p className="mt-2 break-words text-sm font-medium leading-snug">{r.user.name}</p>
-                {r.created_at ? (
-                  <p className="text-xs text-muted-foreground" title={formatDateTime(r.created_at)}>
-                    {timeAgo(r.created_at)}
-                  </p>
-                ) : null}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-start gap-2">
-                  <Stars value={r.rating} size={15} />
-                  {canModerate ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="ml-auto h-7 w-7 text-muted-foreground hover:text-destructive"
-                      onClick={() => moderate(r.id, r.user.name)}
-                      aria-label="Remove review"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  ) : null}
-                </div>
-                {r.comment ? <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground/85">{r.comment}</p> : null}
-                {r.mine ? <p className="mt-1 text-xs font-semibold text-brand">Your review</p> : null}
-              </div>
-            </li>
+            <ReviewItem key={r.id} r={r} onRemove={canModerate ? () => moderate(r.id, r.user.name) : undefined} />
           ))}
         </ul>
       ) : (
@@ -80,6 +48,101 @@ export function ReviewsPanel({ courseId, canModerate }: { courseId: string; canM
           No reviews yet{data.can_review ? " — be the first to rate this course." : "."}
         </p>
       )}
+    </div>
+  );
+}
+
+type ReviewRowData = {
+  id: string;
+  rating: number;
+  comment: string | null;
+  user: { name: string; avatar_url: string | null };
+  mine?: boolean;
+  created_at: string | null;
+};
+
+/** One review: photo / initials, name, when, stars and text (like the old site). */
+export function ReviewItem({ r, onRemove }: { r: ReviewRowData; onRemove?: () => void }) {
+  return (
+    <li className="flex gap-4 px-5 py-5 even:bg-muted/30">
+      <div className="w-32 shrink-0 sm:w-40">
+        <Avatar className="h-10 w-10">
+          {r.user.avatar_url ? <AvatarImage src={r.user.avatar_url} alt="" /> : null}
+          <AvatarFallback className="bg-[#0B1F3A] text-sm font-semibold text-white">{getInitials(r.user.name)}</AvatarFallback>
+        </Avatar>
+        <p className="mt-2 break-words text-sm font-medium leading-snug">{r.user.name}</p>
+        {r.created_at ? (
+          <p className="text-xs text-muted-foreground" title={formatDateTime(r.created_at)}>
+            {timeAgo(r.created_at)}
+          </p>
+        ) : null}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start gap-2">
+          <Stars value={r.rating} size={15} />
+          {onRemove ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="ml-auto h-7 w-7 text-muted-foreground hover:text-destructive"
+              onClick={onRemove}
+              aria-label="Remove review"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          ) : null}
+        </div>
+        {r.comment ? <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground/85">{r.comment}</p> : null}
+        {r.mine ? <p className="mt-1 text-xs font-semibold text-brand">Your review</p> : null}
+      </div>
+    </li>
+  );
+}
+
+/**
+ * Public course page → Reviews tab: anyone reads the approved reviews (10 at a time, "Show more");
+ * a student with access also gets their own review box here.
+ */
+export function PublicReviewsSection({ courseId, canReview }: { courseId: string; canReview: boolean }) {
+  const q = useInfiniteQuery({
+    queryKey: ["public-reviews", courseId],
+    queryFn: ({ pageParam }) => courseReviewsApi.publicList(courseId, pageParam).then((r) => r.data),
+    initialPageParam: 1,
+    getNextPageParam: (last) => (last.has_more ? last.page + 1 : undefined),
+  });
+  const { data: mine } = useQuery({
+    queryKey: ["course-reviews", courseId],
+    queryFn: () => courseReviewsApi.summary(courseId).then((r) => r.data),
+    enabled: canReview,
+    retry: false,
+  });
+  const first = q.data?.pages[0];
+  const list = q.data?.pages.flatMap((p) => p.reviews) ?? [];
+  if (q.isLoading) return <p className="py-6 text-sm text-muted-foreground">Loading reviews…</p>;
+  if (q.isError || !first) return <p className="py-6 text-sm text-muted-foreground">Reviews could not be loaded.</p>;
+  return (
+    <div className="space-y-4">
+      <h2 className="text-xl font-bold tracking-tight text-gray-900 dark:text-foreground md:text-2xl">Student Ratings &amp; Reviews</h2>
+      <RatingSummary s={first} />
+      {canReview && mine?.can_review ? <MyReviewBox courseId={courseId} mine={mine.mine} /> : null}
+      {list.length ? (
+        <ul className="divide-y overflow-hidden rounded-2xl border bg-card">
+          {list.map((r) => (
+            <ReviewItem key={r.id} r={r} />
+          ))}
+        </ul>
+      ) : (
+        <p className="rounded-2xl border border-dashed bg-card px-6 py-8 text-center text-sm text-muted-foreground">No reviews yet.</p>
+      )}
+      {q.hasNextPage ? (
+        <div className="text-center">
+          <Button type="button" variant="outline" onClick={() => q.fetchNextPage()} disabled={q.isFetchingNextPage}>
+            {q.isFetchingNextPage ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            Show more reviews
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -126,6 +189,7 @@ export function MyReviewBox({ courseId, mine, compact }: { courseId: string; min
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["course-reviews", courseId] });
     qc.invalidateQueries({ queryKey: ["my-reviews"] });
+    qc.invalidateQueries({ queryKey: ["public-reviews", courseId] });
   };
   const save = async () => {
     if (!rating) {

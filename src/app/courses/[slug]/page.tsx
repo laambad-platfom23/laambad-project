@@ -37,6 +37,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { Course, Section } from "@/types";
 import { extractCoverImageUrl, publicCourseCoverImageUrlFromRaw } from "@/lib/course-cover";
 import { CourseDescriptionBlocks } from "@/components/courses/course-description-blocks";
+import { PublicReviewsSection } from "@/components/learning/reviews-panel";
 import { useAuthenticatedImageSrc } from "@/hooks/use-authenticated-image-src";
 import { getApiErrorMessage } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
@@ -487,6 +488,14 @@ export default function PublicCourseDetailPage() {
 
   const userHasCourseAccess = !!enrollmentProgress;
 
+  // Course Info | Reviews tabs (the rating in the hero opens Reviews)
+  const [infoTab, setInfoTab] = useState<"info" | "reviews">("info");
+  const tabsRef = useRef<HTMLDivElement | null>(null);
+  const openReviews = () => {
+    setInfoTab("reviews");
+    setTimeout(() => tabsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  };
+
   const learnHref = useMemo(
     () => (course ? `/learn/${encodeURIComponent(course.slug)}` : ""),
     [course],
@@ -695,115 +704,8 @@ export default function PublicCourseDetailPage() {
   else if (pricing)
     priceLabel = formatMoney(pricing.effective_amount ?? pricing.price, pricing.currency || "USD");
 
-  return (
-    <>
-      {/* ── Hero: compact blue band; card absolutely positioned on lg+ so it overlaps the light section below (reference-style) ── */}
-      <section className="overflow-visible text-white selection:bg-[#0B1F3A]/25 selection:text-white dark:bg-[hsl(var(--background))]">
-        <div className="w-full bg-[#0B1F3A] dark:bg-[hsl(var(--background))]">
-          <div className={cn("relative", SHELL, "pb-3 pt-4 sm:pb-4 sm:pt-5")}>
-            <div className={cn(HERO_INTRO, CONTENT_LANE)}>
-              <nav
-                className="mb-2 flex flex-wrap items-center gap-1 text-[12px] font-normal leading-snug text-[#c4d4f4] dark:text-white/55"
-                aria-label="Breadcrumb"
-              >
-                <Link href="/" className="transition-colors hover:text-[#FF8A66] hover:underline">
-                  Home
-                </Link>
-                <span className="text-white/35" aria-hidden>
-                  ›
-                </span>
-                <Link href="/courses" className="transition-colors hover:text-[#FF8A66] hover:underline">
-                  Courses
-                </Link>
-                <span className="text-white/35" aria-hidden>
-                  ›
-                </span>
-                <span className="line-clamp-1 text-[#FF6B45]">{breadcrumbMid}</span>
-              </nav>
-
-              <h1 className="text-balance text-2xl font-bold leading-[1.15] tracking-tight text-white sm:text-3xl lg:text-[2.125rem] lg:leading-[1.12]">
-                {course.title}
-              </h1>
-
-              <p className="mt-3 max-w-3xl text-[15px] leading-relaxed text-white/85 md:text-base">
-                {heroBlurb.length > 220 ? `${heroBlurb.slice(0, 220)}…` : heroBlurb}
-              </p>
-
-              <div className="mt-4 flex flex-wrap items-center gap-2 gap-y-2">
-                {bestseller ? (
-                  <span className="rounded-sm bg-[#0B1F3A] px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-white shadow-sm">
-                    Bestseller
-                  </span>
-                ) : null}
-                {levelLabel ? (
-                  <span className="rounded-sm border border-[#E84A27]/50 bg-[#0B1F3A]/80 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-[#FF6B45] shadow-sm">
-                    {levelLabel}
-                  </span>
-                ) : null}
-                {course.category?.name ? (
-                  <span className="rounded-sm border border-white/25 bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white/95 backdrop-blur-sm">
-                    {course.category.name}
-                  </span>
-                ) : null}
-              </div>
-
-              <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-white/90">
-                {rating ? (
-                  <>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <StarRow rating={rating.average} size="sm" />
-                      <span className="font-bold tabular-nums text-[#FF6B45]">{rating.average.toFixed(1)}</span>
-                      <span className="text-[#c4d4f4]/90">
-                        ({rating.count.toLocaleString()} {rating.count === 1 ? "rating" : "ratings"})
-                      </span>
-                    </div>
-                    <span className="text-white/35">·</span>
-                  </>
-                ) : null}
-                <div className="flex items-center gap-1.5">
-                  <Users className="h-4 w-4 shrink-0 text-[#FF6B45]" aria-hidden />
-                  <span className="tabular-nums">{enrolled.toLocaleString()} students</span>
-                </div>
-              </div>
-
-              <div className="mt-5 flex flex-col gap-3 border-t border-white/15 pt-4 text-[13px] text-white/80 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-6 sm:gap-y-2">
-                {course.instructor_name ? (
-                  <span className="inline-flex min-w-0 flex-wrap items-baseline gap-x-1">
-                    <span className="shrink-0 text-white/55">Created by</span>
-                    {course.instructor_name.split(",").map((p, i) => (
-                      <span key={i}>
-                        {i > 0 ? <span className="text-white/35">, </span> : null}
-                        <span className="font-semibold text-[#FF6B45] underline decoration-[#FF6B45]/40 underline-offset-2">
-                          {p.trim()}
-                        </span>
-                      </span>
-                    ))}
-                  </span>
-                ) : null}
-                {course.updated_at ? (
-                  <span className="inline-flex items-center gap-2">
-                    <Calendar className="h-3.5 w-3.5 shrink-0 text-[#FF6B45]" aria-hidden />
-                    Last updated {formatMonthYear(course.updated_at)}
-                  </span>
-                ) : null}
-              </div>
-
-              <a
-                href="#course-main"
-                className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-[#c4d4f4] underline-offset-4 transition-colors hover:text-[#FF8A66]"
-              >
-                View course details
-                <ChevronDown className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
-              </a>
-            </div>
-
-            <aside
-              className={cn(
-                "relative z-30 mx-auto mt-6 w-full max-w-[400px]",
-                "lg:absolute lg:right-4 lg:top-9 lg:mx-0 lg:mt-0 lg:max-w-[400px]",
-                "xl:right-8",
-              )}
-            >
+  // the purchase card: in the page on small screens, in a sticky rail on large screens
+  const purchaseCard = (
               <div
                 className="overflow-hidden rounded-2xl border border-white/20 bg-white/95 shadow-[0_24px_64px_-16px_rgba(11,31,58,0.28)] ring-1 ring-[#0B1F3A]/10 backdrop-blur-md dark:border-white/30 dark:bg-[#0B1F3A]/90 dark:shadow-[0_28px_70px_-20px_rgba(0,0,0,0.45)] dark:backdrop-blur-xl dark:ring-[#E84A27]/15"
                 style={{ maxWidth: 400 }}
@@ -911,7 +813,118 @@ export default function PublicCourseDetailPage() {
                   </div>
                 </div>
               </div>
-            </aside>
+  );
+
+  return (
+    <>
+      <div className="relative">
+      {/* ── Hero: compact blue band; card absolutely positioned on lg+ so it overlaps the light section below (reference-style) ── */}
+      <section className="overflow-visible text-white selection:bg-[#0B1F3A]/25 selection:text-white dark:bg-[hsl(var(--background))]">
+        <div className="w-full bg-[#0B1F3A] dark:bg-[hsl(var(--background))]">
+          <div className={cn("relative", SHELL, "pb-3 pt-4 sm:pb-4 sm:pt-5")}>
+            <div className={cn(HERO_INTRO, CONTENT_LANE)}>
+              <nav
+                className="mb-2 flex flex-wrap items-center gap-1 text-[12px] font-normal leading-snug text-[#c4d4f4] dark:text-white/55"
+                aria-label="Breadcrumb"
+              >
+                <Link href="/" className="transition-colors hover:text-[#FF8A66] hover:underline">
+                  Home
+                </Link>
+                <span className="text-white/35" aria-hidden>
+                  ›
+                </span>
+                <Link href="/courses" className="transition-colors hover:text-[#FF8A66] hover:underline">
+                  Courses
+                </Link>
+                <span className="text-white/35" aria-hidden>
+                  ›
+                </span>
+                <span className="line-clamp-1 text-[#FF6B45]">{breadcrumbMid}</span>
+              </nav>
+
+              <h1 className="text-balance text-2xl font-bold leading-[1.15] tracking-tight text-white sm:text-3xl lg:text-[2.125rem] lg:leading-[1.12]">
+                {course.title}
+              </h1>
+
+              <p className="mt-3 max-w-3xl text-[15px] leading-relaxed text-white/85 md:text-base">
+                {heroBlurb.length > 220 ? `${heroBlurb.slice(0, 220)}…` : heroBlurb}
+              </p>
+
+              <div className="mt-4 flex flex-wrap items-center gap-2 gap-y-2">
+                {bestseller ? (
+                  <span className="rounded-sm bg-[#0B1F3A] px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-white shadow-sm">
+                    Bestseller
+                  </span>
+                ) : null}
+                {levelLabel ? (
+                  <span className="rounded-sm border border-[#E84A27]/50 bg-[#0B1F3A]/80 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-[#FF6B45] shadow-sm">
+                    {levelLabel}
+                  </span>
+                ) : null}
+                {course.category?.name ? (
+                  <span className="rounded-sm border border-white/25 bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white/95 backdrop-blur-sm">
+                    {course.category.name}
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-white/90">
+                {rating ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={openReviews}
+                      className="flex flex-wrap items-center gap-2 rounded-md text-left hover:underline hover:decoration-white/40 hover:underline-offset-4"
+                      title="See the reviews"
+                    >
+                      <StarRow rating={rating.average} size="sm" />
+                      <span className="font-bold tabular-nums text-[#FF6B45]">{rating.average.toFixed(1)}</span>
+                      <span className="text-[#c4d4f4]/90">
+                        ({rating.count.toLocaleString()} {rating.count === 1 ? "rating" : "ratings"})
+                      </span>
+                    </button>
+                    <span className="text-white/35">·</span>
+                  </>
+                ) : null}
+                <div className="flex items-center gap-1.5">
+                  <Users className="h-4 w-4 shrink-0 text-[#FF6B45]" aria-hidden />
+                  <span className="tabular-nums">{enrolled.toLocaleString()} students</span>
+                </div>
+              </div>
+
+              <div className="mt-5 flex flex-col gap-3 border-t border-white/15 pt-4 text-[13px] text-white/80 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-6 sm:gap-y-2">
+                {course.instructor_name ? (
+                  <span className="inline-flex min-w-0 flex-wrap items-baseline gap-x-1">
+                    <span className="shrink-0 text-white/55">Created by</span>
+                    {course.instructor_name.split(",").map((p, i) => (
+                      <span key={i}>
+                        {i > 0 ? <span className="text-white/35">, </span> : null}
+                        <span className="font-semibold text-[#FF6B45] underline decoration-[#FF6B45]/40 underline-offset-2">
+                          {p.trim()}
+                        </span>
+                      </span>
+                    ))}
+                  </span>
+                ) : null}
+                {course.updated_at ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Calendar className="h-3.5 w-3.5 shrink-0 text-[#FF6B45]" aria-hidden />
+                    Last updated {formatMonthYear(course.updated_at)}
+                  </span>
+                ) : null}
+              </div>
+
+              <a
+                href="#course-main"
+                className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-[#c4d4f4] underline-offset-4 transition-colors hover:text-[#FF8A66]"
+              >
+                View course details
+                <ChevronDown className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
+              </a>
+            </div>
+
+            {/* phones and tablets: the card sits in the page (large screens: the sticky rail below) */}
+            <aside className="relative z-30 mx-auto mt-6 w-full max-w-[400px] lg:hidden">{purchaseCard}</aside>
           </div>
         </div>
       </section>
@@ -930,6 +943,39 @@ export default function PublicCourseDetailPage() {
           )}
         >
           <div className={CONTENT_LANE}>
+            {/* Course Info | Reviews (as on the old site) */}
+            <div
+              ref={tabsRef}
+              role="tablist"
+              aria-label="Course sections"
+              className="mb-5 flex scroll-mt-24 gap-1 border-b border-gray-200 dark:border-white/20"
+            >
+              {(
+                [
+                  ["info", "Course Info"],
+                  ["reviews", rating ? `Reviews (${rating.count.toLocaleString()})` : "Reviews"],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={infoTab === key}
+                  onClick={() => setInfoTab(key)}
+                  className={cn(
+                    "-mb-px border-b-2 px-4 py-2.5 text-sm font-semibold transition-colors",
+                    infoTab === key
+                      ? "border-[#E84A27] text-gray-900 dark:text-white"
+                      : "border-transparent text-gray-500 hover:text-gray-900 dark:text-muted-foreground dark:hover:text-white",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {infoTab === "reviews" ? (
+              <PublicReviewsSection courseId={course.id} canReview={userHasCourseAccess} />
+            ) : (
             <div className="w-full min-w-0 space-y-6 md:space-y-8">
               {bullets.length > 0 ? (
                 <div className="rounded-none border border-gray-200 bg-white p-5 shadow-sm dark:border-white/20 dark:bg-card sm:rounded-lg sm:p-6 md:p-8">
@@ -1198,9 +1244,23 @@ export default function PublicCourseDetailPage() {
                 </div>
               ) : null}
             </div>
+            )}
           </div>
         </div>
       </section>
+
+      {/* large screens: the purchase card stays in view while the course content scrolls, and stops
+          at the end of it (Udemy-like). Same place as before: the right edge of the page shell. */}
+      <div className="pointer-events-none absolute inset-0 z-30 hidden lg:block">
+        <div className={cn(SHELL, "relative h-full")}>
+          <div className="absolute bottom-6 right-4 top-9 w-[400px] xl:right-8">
+            <aside className="pointer-events-auto sticky top-[88px] max-h-[calc(100dvh-104px)] overflow-y-auto rounded-2xl [scrollbar-width:thin]">
+              {purchaseCard}
+            </aside>
+          </div>
+        </div>
+      </div>
+      </div>
 
       <CourseCheckoutAuthModal
         open={checkoutAuthOpen}

@@ -44,6 +44,40 @@ async function stats(courseId: string) {
   };
 }
 
+/**
+ * Public course page → Reviews: anyone may read the approved reviews of a published course,
+ * 10 per page, newest first. Only the reviewer's name and photo are shown (as on the old site).
+ */
+export async function publicReviews(courseId: string, page = 1) {
+  assertUuid(courseId, "course not found");
+  const c = await prisma.course.findFirst({ where: { id: courseId, deletedAt: null, status: "published" }, select: { id: true } });
+  if (!c) throw Err.notFound("course not found");
+  const size = 10;
+  const p = Math.max(1, Math.min(200, Math.floor(Number(page)) || 1));
+  const [s, rows] = await Promise.all([
+    stats(c.id),
+    prisma.courseReview.findMany({
+      where: { courseId: c.id, deletedAt: null, isApproved: true },
+      include: { user: { select: { id: true, name: true, avatarUrl: true } } },
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+      skip: (p - 1) * size,
+      take: size + 1,
+    }),
+  ]);
+  return {
+    ...s,
+    page: p,
+    has_more: rows.length > size,
+    reviews: rows.slice(0, size).map((r) => ({
+      id: r.id,
+      rating: Number(r.rating),
+      comment: plain(r.comment) || null,
+      user: { name: r.user.name, avatar_url: userPhotoUrl(r.user.id, r.user.avatarUrl) },
+      created_at: r.createdAt?.toISOString() ?? null,
+    })),
+  };
+}
+
 /** Learn page → Reviews: average, 5…1 star bars, my review, and the newest reviews. */
 export async function summary(user: AuthUser, courseId: string) {
   const ctx = await courseContext(user, courseId, "member");

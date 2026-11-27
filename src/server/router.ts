@@ -139,6 +139,10 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
       const slug = decodeURIComponent(path.slice("courses/by-slug/".length));
       return publicJson(await courses.publicBySlug(slug), 120);
     }
+    // A9: the course page's Reviews tab (anyone; published courses, approved reviews; CDN-cached 5 min)
+    if (path.match(/^courses\/[^/]+\/reviews$/) && method === "GET") {
+      return publicJson(await reviews.publicReviews(path.split("/")[1], Number(url.searchParams.get("page") || 1)), 300);
+    }
 
     // ── Public research / certificates / lesson QA / site settings ──
     if (path === "research" && method === "GET") {
