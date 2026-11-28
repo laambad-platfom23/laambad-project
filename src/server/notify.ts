@@ -189,11 +189,11 @@ export function notifyBook(userId: string, orderId: string, bookTitle: string) {
     kind: "book",
     ref: orderId,
     title: `Your book is ready: ${bookTitle}`,
-    body: "Your payment was confirmed. Open Books → My purchases to read or download it.",
+    body: "Your payment was confirmed. Open Books → My purchases to read it.",
     link: "/dashboard/books",
     email: {
       subject: `Your book "${bookTitle}" is ready`,
-      lines: [`Your payment for "${bookTitle}" was confirmed.`, "You can read it online or download it from Books."],
+      lines: [`Your payment for "${bookTitle}" was confirmed.`, "You can read it in Books, on the site and in the app."],
       cta: "Open my books",
     },
   });

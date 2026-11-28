@@ -25,9 +25,14 @@ export function extractUploadedFileUuidFromUrl(url: string): string | null {
   return null;
 }
 
-/** Use for previews: API file URLs or static upload paths that embed the file UUID. */
+/**
+ * Use for previews: only the old backend's `/api/v1/files/<uuid>` URLs needed a signed-in fetch.
+ * Images uploaded by this app (Vercel Blob `…/uploads/courses/<uuid>.png`, local `/uploads/…`) are
+ * plain public URLs — treating their UUID as a file id sent them to a route that no longer exists,
+ * so a freshly uploaded cover never showed (Phase 2 test).
+ */
 export function extractPreviewFileIdFromUrl(url: string): string | null {
-  return apiV1FileIdFromUrl(url) ?? extractUploadedFileUuidFromUrl(url);
+  return apiV1FileIdFromUrl(url);
 }
 
 /** Normalize a URL taken from markdown or HTML so it matches how Next and the API serve assets. */

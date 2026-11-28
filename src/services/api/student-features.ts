@@ -182,14 +182,30 @@ export const booksApi = {
   /** the PDF as a Blob (the request carries the sign-in token; the storage URL is never exposed) */
   file: (id: string) =>
     apiClient.get<Blob>(`/api/v1/books/${id}/file`, { responseType: "blob", timeout: 300_000 }),
-  payWaafi: (id: string, phone: string) =>
+  payWaafi: (id: string, phone: string, couponCode?: string) =>
     apiClient.post<{ outcome: "approved" | "declined" | "unknown"; message: string; status: string }>(
       `/api/v1/books/${id}/pay/waafi`,
-      { phone },
+      { phone, coupon_code: couponCode || undefined },
       { timeout: 160_000 }
     ),
-  payManual: (id: string, senderPhone: string, reference?: string) =>
-    apiClient.post<{ id: string; status: string }>(`/api/v1/books/${id}/pay/manual`, { sender_phone: senderPhone, reference }),
+  payManual: (id: string, senderPhone: string, reference?: string, couponCode?: string) =>
+    apiClient.post<{ id: string; status: string }>(`/api/v1/books/${id}/pay/manual`, {
+      sender_phone: senderPhone || undefined,
+      reference,
+      coupon_code: couponCode || undefined,
+    }),
+  /** A11: what the book costs with a coupon (same shape as the course preview) */
+  previewCoupon: (id: string, code: string) =>
+    apiClient.post<{
+      valid: boolean;
+      code?: string;
+      discount_percent?: number;
+      currency: string;
+      amount_minor: number;
+      original_amount_minor: number;
+      saved_minor: number;
+      message?: string;
+    }>(`/api/v1/books/${id}/coupon-preview`, { code }),
   // admin
   create: (data: BookInput) => apiClient.post<Book>("/api/v1/admin/books", data),
   update: (id: string, data: BookInput) => apiClient.patch<Book>(`/api/v1/admin/books/${id}`, data),

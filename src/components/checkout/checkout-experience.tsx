@@ -117,7 +117,7 @@ function CheckoutInner() {
     },
     onSuccess: async (payment) => {
       await queryClient.invalidateQueries({ queryKey: ["dashboard-overview"] });
-      await queryClient.invalidateQueries({ queryKey: ["my-payments"] });
+      await queryClient.invalidateQueries({ queryKey: ["my-orders"] });
       // ordered: it leaves the cart (the request is on the Payments page now)
       removeFromCart("course", course!.id);
       if (payment.status === "paid") {
@@ -148,7 +148,7 @@ function CheckoutInner() {
       return data;
     },
     onSuccess: async (result) => {
-      await queryClient.invalidateQueries({ queryKey: ["my-payments"] });
+      await queryClient.invalidateQueries({ queryKey: ["my-orders"] });
       if (result.outcome === "approved") {
         removeFromCart("course", course!.id);
         await queryClient.invalidateQueries({ queryKey: ["dashboard-overview"] });
@@ -495,11 +495,14 @@ function CheckoutInner() {
                   size="lg"
                   disabled={initiate.isPending || freeEnroll.isPending || waafi.isPending}
                   onClick={() => {
+                    const coupon_code = couponPreview?.valid && couponPreview.code ? couponPreview.code : undefined;
                     if (totalMinor <= 0) {
-                      freeEnroll.mutate();
+                      // a 100% coupon: the server checks the coupon, records the order and opens the course
+                      // (calling "enroll" without the coupon was refused with 402 — Phase 2 test)
+                      if (coupon_code) initiate.mutate({ coupon_code });
+                      else freeEnroll.mutate();
                       return;
                     }
-                    const coupon_code = couponPreview?.valid && couponPreview.code ? couponPreview.code : undefined;
                     if (payMethod === "wafi") {
                       pay.setWafiPhoneTouched(true);
                       if (!isValidSomaliMobile(wafiPhone)) {

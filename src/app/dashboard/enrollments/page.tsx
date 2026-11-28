@@ -39,6 +39,7 @@ import { formatDate, getApiErrorMessage } from "@/lib/utils";
 import type { AdminEnrollmentRow, EnrolledCourseDTO } from "@/types";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
+import { OrdersTable } from "@/components/dashboard/orders-table";
 import { isAdminUser } from "@/lib/auth-routing";
 import { enrollmentStatusClass, enrollmentStatusLabel, paymentMethodLabel } from "@/lib/payment-labels";
 
@@ -95,7 +96,46 @@ function canApproveOfflineEnrollment(row: AdminEnrollmentRow) {
   );
 }
 
+/** A11 (Phase 2): admins see course enrollments and book enrollments (book orders) side by side. */
 export default function EnrollmentsPage() {
+  const user = useAuthStore((s) => s.user);
+  const [tab, setTab] = useState<"courses" | "books">("courses");
+  if (!isAdminUser(user)) return <CourseEnrollments />;
+  return (
+    <div className="space-y-5">
+      <div className="inline-flex rounded-lg border p-1">
+        {(["courses", "books"] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={cn(
+              "rounded-md px-4 py-1.5 text-sm font-medium transition",
+              tab === t ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {t === "courses" ? "Course enrollments" : "Book enrollments"}
+          </button>
+        ))}
+      </div>
+      {tab === "courses" ? (
+        <CourseEnrollments />
+      ) : (
+        <div className="space-y-6">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Book enrollments</h1>
+            <p className="text-muted-foreground">
+              Students who bought a book (Completed), who wait for approval (Pending) or were rejected — approve, reject or give a coupon like a course order.
+            </p>
+          </div>
+          <OrdersTable defaultStatus="completed" fixedType="book" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CourseEnrollments() {
   const user = useAuthStore((s) => s.user);
   const isAdmin = isAdminUser(user);
   const queryClient = useQueryClient();
@@ -117,8 +157,8 @@ export default function EnrollmentsPage() {
       setApproveRow(null);
       queryClient.invalidateQueries({ queryKey: ["admin-enrollments"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-overview"] });
-      queryClient.invalidateQueries({ queryKey: ["my-payments"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["my-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
     },
     onError: (err: unknown) => {
       toast.error(getApiErrorMessage(err, "Could not approve"));
@@ -132,8 +172,8 @@ export default function EnrollmentsPage() {
       setConfirmCancelRow(null);
       queryClient.invalidateQueries({ queryKey: ["admin-enrollments"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-overview"] });
-      queryClient.invalidateQueries({ queryKey: ["my-payments"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["my-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
     },
     onError: (err: unknown) => toast.error(getApiErrorMessage(err, "Could not cancel")),
   });
@@ -145,8 +185,8 @@ export default function EnrollmentsPage() {
       setConfirmDeleteRow(null);
       queryClient.invalidateQueries({ queryKey: ["admin-enrollments"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-overview"] });
-      queryClient.invalidateQueries({ queryKey: ["my-payments"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["my-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
     },
     onError: (err: unknown) => toast.error(getApiErrorMessage(err, "Could not delete")),
   });

@@ -18,7 +18,8 @@ import { fromMinor, toMinor } from "@/server/money";
 import { isWaafiPayConfigured, normalizeSomaliMobile, waafiPurchase } from "@/server/waafipay";
 import { slugify } from "./learning-paths";
 import { assertUuid, isUuid } from "@/lib/uuid";
-import { notifyBook } from "@/server/notify";
+import { notifyBook, notifyPaymentRejected } from "@/server/notify";
+import * as coupons from "@/server/services/coupons";
 
 const MAX_PDF_BYTES = 200 * 1024 * 1024;
 const MAX_SERVER_UPLOAD = 4 * 1024 * 1024; // Vercel functions accept ~4.5 MB request bodies
@@ -350,11 +351,43 @@ async function buyable(user: AuthUser, bookId: string) {
   return b;
 }
 
-/** WaafiPay (EVC Plus / Zaad / Sahal / eDahab) — same guards as the course checkout. */
-export async function payWithWaafi(user: AuthUser, bookId: string, input: { phone?: string }) {
+/** Price after an optional coupon (A11). A code that does not apply is an error, never a silent full price. */
+async function priceWithCoupon(b: BookRow, couponCode?: string | null) {
+  const list = priceMinor(b);
+  if (!couponCode?.trim()) return { amount: list, couponId: null as string | null };
+  const r = await coupons.evaluate(couponCode, "book", list);
+  if (!r.valid) throw Err.invalidInput(`coupon: ${r.message}`);
+  return { amount: r.amount_minor, couponId: r.coupon_id };
+}
+
+/** Checkout preview of a coupon on a book (signed in). */
+export async function previewCoupon(bookId: string, code: string) {
+  assertUuid(bookId, "book not found");
+  const b = await prisma.book.findFirst({ where: { id: bookId, deletedAt: null, status: "published" } });
+  if (!b) throw Err.notFound("book not found");
+  return coupons.previewView(await coupons.evaluate(code, "book", priceMinor(b)), b.currency);
+}
+
+/** A coupon brought the price to 0: the order is settled at once. */
+async function settleFree(user: AuthUser, b: BookRow, couponId: string | null) {
+  const t = now();
+  const row = await prisma.bookOrder.create({
+    data: { id: newId(), bookId: b.id, userId: user.user_id, amount: fromMinor(0), currency: b.currency, status: "paid", provider: "free", couponId, paidAt: t, createdAt: t, updatedAt: t },
+  });
+  await coupons.countUse(couponId);
+  notifyBook(user.user_id, row.id, b.title);
+  return row;
+}
+
+/** WaafiPay (EVC Plus / Zaad / Sahal) — same guards as the course checkout. */
+export async function payWithWaafi(user: AuthUser, bookId: string, input: { phone?: string; coupon_code?: string }) {
   const b = await buyable(user, bookId);
-  const amount = priceMinor(b);
-  if (amount === 0) throw Err.conflict("free_book", "this book is free");
+  if (priceMinor(b) === 0) throw Err.conflict("free_book", "this book is free");
+  const { amount, couponId } = await priceWithCoupon(b, input.coupon_code);
+  if (amount === 0) {
+    const row = await settleFree(user, b, couponId);
+    return { ...orderView(row), outcome: "approved" as const, message: "Your book is ready." };
+  }
   if (!isWaafiPayConfigured()) {
     throw new ApiError(503, "waafipay_not_configured", "WaafiPay is not available right now. Please use manual payment.");
   }
@@ -382,6 +415,7 @@ export async function payWithWaafi(user: AuthUser, bookId: string, input: { phon
       status: "pending",
       provider: "wafi",
       providerRefId: msisdn,
+      couponId,
       createdAt: t,
       updatedAt: t,
     },
@@ -400,6 +434,7 @@ export async function payWithWaafi(user: AuthUser, bookId: string, input: { phon
       where: { id: row.id, status: "pending" },
       data: { status: "paid", paidAt: t2, transactionId: outcome.transactionId || null, updatedAt: t2 },
     });
+    await coupons.countUse(couponId);
     notifyBook(user.user_id, row.id, b.title);
     return { ...orderView({ ...row, status: "paid" }), outcome: "approved" as const, message: "Payment received. Your book is ready." };
   }
@@ -417,14 +452,20 @@ export async function payWithWaafi(user: AuthUser, bookId: string, input: { phon
   };
 }
 
-/** Manual EVC request: the student sends money and tells us the sender number; an admin approves. */
-export async function requestManual(user: AuthUser, bookId: string, input: { sender_phone?: string; reference?: string }) {
+/**
+ * Manual request: the student sends the money (EVC Plus or Salaam Bank) and tells us the sender number
+ * and/or the transaction reference; an admin approves it on the Orders page.
+ */
+export async function requestManual(user: AuthUser, bookId: string, input: { sender_phone?: string; reference?: string; coupon_code?: string }) {
   const b = await buyable(user, bookId);
-  const amount = priceMinor(b);
-  if (amount === 0) throw Err.conflict("free_book", "this book is free");
-  const sender = normalizeSomaliMobile(input.sender_phone);
-  if (!sender) throw Err.invalidInput("enter a valid Somali mobile number for the sender");
+  if (priceMinor(b) === 0) throw Err.conflict("free_book", "this book is free");
+  const { amount, couponId } = await priceWithCoupon(b, input.coupon_code);
+  if (amount === 0) return orderView(await settleFree(user, b, couponId));
   const reference = (input.reference ?? "").replace(/[^\w\-./ #]/g, "").trim().slice(0, 64) || null;
+  const senderRaw = String(input.sender_phone ?? "").trim();
+  const sender = senderRaw ? normalizeSomaliMobile(senderRaw) : null;
+  if (senderRaw && !sender) throw Err.invalidInput("enter a valid Somali mobile number for the sender");
+  if (!sender && !reference) throw Err.invalidInput("enter the number you paid from, or the transaction / bank reference");
   const t = now();
   const open = await prisma.bookOrder.findFirst({
     where: { bookId, userId: user.user_id, provider: "offline", status: "pending" },
@@ -432,7 +473,7 @@ export async function requestManual(user: AuthUser, bookId: string, input: { sen
   const row = open
     ? await prisma.bookOrder.update({
         where: { id: open.id },
-        data: { amount: fromMinor(amount), providerRefId: sender, transactionId: reference ?? open.transactionId, updatedAt: t },
+        data: { amount: fromMinor(amount), couponId, providerRefId: sender ?? open.providerRefId, transactionId: reference ?? open.transactionId, updatedAt: t },
       })
     : await prisma.bookOrder.create({
         data: {
@@ -445,6 +486,7 @@ export async function requestManual(user: AuthUser, bookId: string, input: { sen
           provider: "offline",
           providerRefId: sender,
           transactionId: reference,
+          couponId,
           createdAt: t,
           updatedAt: t,
         },
@@ -488,6 +530,7 @@ export async function adminApproveOrder(id: string, reference?: string) {
     where: { id },
     data: { status: "paid", paidAt: t, updatedAt: t, ...(ref ? { transactionId: ref } : {}) },
   });
+  await coupons.countUse(o.couponId);
   const book = await prisma.book.findFirst({ where: { id: o.bookId }, select: { title: true } });
   notifyBook(o.userId, o.id, book?.title ?? "your book");
   return { ok: true };
@@ -502,6 +545,32 @@ export async function adminRejectOrder(id: string, reason?: string) {
     where: { id },
     data: { status: "failed", note: (reason || "rejected by admin").slice(0, 500), updatedAt: now() },
   });
+  const book = await prisma.book.findFirst({ where: { id: o.bookId }, select: { title: true } });
+  notifyPaymentRejected(o.userId, o.id, book?.title ?? "your book", reason?.trim() || undefined);
   return { ok: true };
 }
 
+/**
+ * Admin (A11): put a coupon on a pending book order. The amount is recomputed from the book price;
+ * at 0 the order is settled and the book opens for the student.
+ */
+export async function adminApplyCoupon(id: string, code: string) {
+  assertUuid(id, "order not found");
+  const o = await prisma.bookOrder.findFirst({ where: { id }, include: { book: true } });
+  if (!o || !o.book) throw Err.notFound("order not found");
+  if (o.status !== "pending") throw Err.conflict("not_pending", "only pending orders can get a coupon");
+  const r = await coupons.evaluate(code, "book", priceMinor(o.book));
+  if (!r.valid) throw Err.invalidInput(`coupon: ${r.message}`);
+  const t = now();
+  if (r.amount_minor === 0) {
+    await prisma.bookOrder.update({
+      where: { id },
+      data: { amount: fromMinor(0), couponId: r.coupon_id, status: "paid", paidAt: t, note: `coupon ${r.code} by admin`, updatedAt: t },
+    });
+    await coupons.countUse(r.coupon_id);
+    notifyBook(o.userId, o.id, o.book.title);
+    return { ok: true, status: "paid", amount: 0 };
+  }
+  await prisma.bookOrder.update({ where: { id }, data: { amount: fromMinor(r.amount_minor), couponId: r.coupon_id, updatedAt: t } });
+  return { ok: true, status: "pending", amount: r.amount_minor };
+}

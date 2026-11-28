@@ -18,6 +18,7 @@ import { useAuthStore } from "@/store/auth-store";
 import { isAdminUser } from "@/lib/auth-routing";
 import { SODEMY_CONTACT } from "@/lib/sodemy-contact";
 import { cn, formatDateTime, getApiErrorMessage } from "@/lib/utils";
+import { MANUAL_PAYMENT_TEXT } from "@/lib/payment-info";
 import { toast } from "sonner";
 
 /** A5: diplomas (course bundles). Students buy one and get all its courses; admins build and approve. */
@@ -220,7 +221,7 @@ function BuyDialog({ bundle, onClose }: { bundle: Bundle; onClose: () => void })
     onError: (e) => toast.error(getApiErrorMessage(e, "Payment failed")),
   });
   const wa = `https://wa.me/${SODEMY_CONTACT.whatsappUrl.replace(/\D/g, "")}?text=${encodeURIComponent(
-    [`Asc, waxaan iibsaday diploma Laambad (Manual payment / EVC Plus).`, `Diploma: ${bundle.title}`, `Lacagta: ${price}`, phone ? `Lambarka: ${phone}` : "", reference ? `Transaction ID: ${reference}` : ""]
+    [`Asc, waxaan iibsaday diploma Laambad (Manual payment).`, `Diploma: ${bundle.title}`, `Lacagta: ${price}`, phone ? `Lambarka: ${phone}` : "", reference ? `Transaction ID: ${reference}` : ""]
       .filter(Boolean)
       .join("\n")
   )}`;
@@ -262,13 +263,13 @@ function BuyDialog({ bundle, onClose }: { bundle: Bundle; onClose: () => void })
                   onClick={() => setMethod(m)}
                   className={cn("rounded-lg border px-3 py-2 text-left text-sm", method === m ? "border-brand bg-brand-soft font-semibold" : "hover:bg-muted/60")}
                 >
-                  {m === "waafi" ? "Pay now (PIN)" : "Manual EVC"}
+                  {m === "waafi" ? "Pay now (PIN)" : "Manual payment"}
                 </button>
               ))}
             </div>
             {method === "manual" ? (
               <p className="text-sm text-muted-foreground">
-                Send <strong className="text-foreground">{price}</strong> with EVC Plus to <strong className="font-mono text-foreground">+252 61 9993660</strong>, then submit.
+                Send <strong className="text-foreground">{price}</strong> to <strong className="text-foreground">{MANUAL_PAYMENT_TEXT}</strong>, then submit.
               </p>
             ) : (
               <p className="text-sm text-muted-foreground">You will get a prompt on your phone — confirm it with your PIN.</p>

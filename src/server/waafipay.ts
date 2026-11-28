@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 /**
- * WaafiPay Direct API — `API_PURCHASE` with a mobile wallet (EVC Plus, Zaad, Sahal, eDahab …).
+ * WaafiPay Direct API — `API_PURCHASE` with a mobile wallet (EVC Plus, Zaad, Sahal).
  * Same settings as the old WooCommerce plugin: Store ID = API user id, HPP Key = API key,
  * Merchant ID = merchant uid.
  *
@@ -44,7 +44,7 @@ export function normalizeSomaliMobile(raw: string | undefined | null): string | 
   if (d.startsWith("00252")) d = d.slice(5);
   else if (d.startsWith("252")) d = d.slice(3);
   if (d.startsWith("0")) d = d.slice(1);
-  // 61/77 Hormuud (EVC Plus), 62/65/66 Somtel (eDahab), 63 Telesom (Zaad), 90 Golis (Sahal), …
+  // 61/77 Hormuud (EVC Plus), 63 Telesom (Zaad), 90 Golis (Sahal), …
   if (!/^(6[1-9]|7[0-9]|9[0-9])\d{7}$/.test(d)) return null;
   return `252${d}`;
 }

@@ -2,6 +2,7 @@ import * as prerequisites from "./prerequisites";
 import { isUuid } from "@/lib/uuid";
 import { applyLessonAccess, lessonAccess } from "./sequencing";
 import * as review from "./course-review";
+import * as coupons from "./coupons";
 import { prisma, newId, now } from "@/lib/db";
 import type { CoursePricing, Prisma } from "@prisma/client";
 import { fromMinor, toMinor, toMinorOrNull } from "@/server/money";
@@ -816,62 +817,12 @@ export async function updatePricing(
   return getPricing(courseId);
 }
 
+/** Price of a course after a coupon (A11: shared rules with books — scope, expiry, usage limit). */
 export async function previewCoupon(courseId: string, code: string) {
   const pricing = await activePricing(courseId);
   if (!pricing) throw Err.notFound("pricing not found");
   const original = pricing.isFree ? 0 : toMinor(pricing.discountPrice ?? pricing.price);
-  const coupon = await prisma.coupon.findFirst({
-    // migrated WooCommerce codes are mostly lower-case: match case-insensitively
-    where: { code: { equals: code.trim(), mode: "insensitive" }, isActive: true, deletedAt: null },
-  });
-  if (!coupon) {
-    return {
-      valid: false,
-      currency: pricing.currency,
-      amount_minor: original,
-      original_amount_minor: original,
-      saved_minor: 0,
-      message: "invalid coupon",
-    };
-  }
-  if (coupon.expiresAt && coupon.expiresAt < now()) {
-    return {
-      valid: false,
-      currency: pricing.currency,
-      amount_minor: original,
-      original_amount_minor: original,
-      saved_minor: 0,
-      message: "coupon expired",
-    };
-  }
-  if (coupon.usageLimit != null && coupon.usageCount >= coupon.usageLimit) {
-    return {
-      valid: false,
-      currency: pricing.currency,
-      amount_minor: original,
-      original_amount_minor: original,
-      saved_minor: 0,
-      message: "coupon usage limit reached",
-    };
-  }
-  // Migrated WooCommerce coupons are either a percentage or a fixed amount (Decimal dollars).
-  const isFixed = coupon.discountType !== "percent" && coupon.discountAmount != null;
-  const pct = isFixed ? 0 : Number(coupon.discountPercent ?? 0);
-  const saved = Math.min(
-    original,
-    isFixed ? toMinor(coupon.discountAmount) : Math.floor((original * pct) / 100)
-  );
-  const amount = Math.max(0, original - saved);
-  return {
-    valid: true,
-    code: coupon.code,
-    discount_percent: pct,
-    discount_type: coupon.discountType,
-    currency: pricing.currency,
-    amount_minor: amount,
-    original_amount_minor: original,
-    saved_minor: saved,
-  };
+  return coupons.previewView(await coupons.evaluate(code, "course", original), pricing.currency);
 }
 
 export async function addSection(

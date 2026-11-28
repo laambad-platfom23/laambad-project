@@ -8,7 +8,8 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, CheckCircle2, ChevronLeft, Clock, FileText, Loader2, Lock } from "lucide-react";
+import { BookOpen, CheckCircle2, ChevronLeft, Clock, FileText, Loader2, Lock, Tag } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { booksApi, type Book } from "@/services/api/student-features";
@@ -29,6 +30,7 @@ import {
 } from "@/components/checkout/checkout-parts";
 
 type BookWaafiResult = { outcome: "approved" | "declined" | "unknown"; message: string; status: string };
+type CouponPreview = Awaited<ReturnType<typeof booksApi.previewCoupon>>["data"];
 
 const PRIMARY =
   "bg-[#0B1F3A] font-bold text-white shadow-lg shadow-[#0B1F3A]/20 hover:bg-[#123252] dark:bg-brand dark:hover:bg-brand-hover";
@@ -62,6 +64,9 @@ export function BookCheckout({ slug }: { slug: string }) {
   const pay = usePaymentForm();
   const [waafiDialog, setWaafiDialog] = useState<WaafiDialogState<BookWaafiResult>>(null);
   const [manualDone, setManualDone] = useState<ManualOrder | null>(null);
+  const [couponInput, setCouponInput] = useState("");
+  const [coupon, setCoupon] = useState<CouponPreview | null>(null);
+  const couponCode = coupon?.valid && coupon.code ? coupon.code : undefined;
 
   const { data: book, isLoading, isError } = useQuery({
     queryKey: ["checkout-book", slug, authed],
@@ -75,7 +80,7 @@ export function BookCheckout({ slug }: { slug: string }) {
   };
 
   const waafi = useMutation({
-    mutationFn: async (phone: string) => (await booksApi.payWaafi(book!.id, phone)).data as BookWaafiResult,
+    mutationFn: async (phone: string) => (await booksApi.payWaafi(book!.id, phone, couponCode)).data as BookWaafiResult,
     onSuccess: async (result) => {
       if (result.outcome === "approved") removeFromCart("book", book!.id);
       setWaafiDialog({ phase: "done", result });
@@ -87,13 +92,20 @@ export function BookCheckout({ slug }: { slug: string }) {
   });
 
   const manual = useMutation({
-    mutationFn: async () => (await booksApi.payManual(book!.id, pay.senderPhone.trim(), pay.payRef.trim() || undefined)).data,
+    mutationFn: async () => (await booksApi.payManual(book!.id, pay.senderPhone.trim(), pay.payRef.trim() || undefined, couponCode)).data,
     onSuccess: async (order) => {
       removeFromCart("book", book!.id);
+      if (order?.status === "paid") {
+        // a 100% coupon: nothing to pay, the book is open now
+        toast.success("Your book is ready!");
+        await qc.invalidateQueries({ queryKey: ["books"] });
+        router.push(readHref);
+        return;
+      }
       setManualDone({
         kind: "book",
         title: book!.title,
-        amount: formatMinor(book!.price, book!.currency),
+        amount: formatMinor(couponCode && coupon ? coupon.amount_minor : book!.price, book!.currency),
         senderPhone: pay.senderPhone.trim(),
         reference: pay.payRef.trim(),
         paymentId: String(order?.id ?? ""),
@@ -101,6 +113,20 @@ export function BookCheckout({ slug }: { slug: string }) {
       await qc.invalidateQueries({ queryKey: ["books"] });
     },
     onError: (err: unknown) => toast.error(getApiErrorMessage(err, "Could not submit the payment request")),
+  });
+
+  const applyCoupon = useMutation({
+    mutationFn: async (code: string) => (await booksApi.previewCoupon(book!.id, code.trim())).data,
+    onSuccess: (r) => {
+      if (r.valid) {
+        setCoupon(r);
+        toast.success(r.code ? `Coupon ${r.code} applied` : "Coupon applied");
+      } else {
+        setCoupon(null);
+        toast.error(r.message || "Invalid or expired coupon");
+      }
+    },
+    onError: (err: unknown) => toast.error(getApiErrorMessage(err, "Could not apply the coupon")),
   });
 
   const backHref = `/dashboard/books?book=${encodeURIComponent(slug)}`;
@@ -166,10 +192,15 @@ export function BookCheckout({ slug }: { slug: string }) {
     );
   }
 
-  const price = formatMinor(book.price, book.currency);
+  const totalMinor = couponCode && coupon ? coupon.amount_minor : book.price;
+  const price = formatMinor(totalMinor, book.currency);
   const busy = waafi.isPending || manual.isPending;
 
   const submit = () => {
+    if (totalMinor <= 0) {
+      manual.mutate(); // the server checks the coupon and opens the book
+      return;
+    }
     if (pay.method === "wafi") {
       pay.setWafiPhoneTouched(true);
       if (!isValidSomaliMobile(pay.wafiPhone)) {
@@ -180,8 +211,12 @@ export function BookCheckout({ slug }: { slug: string }) {
       waafi.mutate(pay.wafiPhone.trim());
       return;
     }
-    if (!isValidSomaliMobile(pay.senderPhone)) {
+    if (pay.senderPhone.trim() && !isValidSomaliMobile(pay.senderPhone)) {
       toast.error("Enter the 9-digit number you paid from, e.g. 61 234 5678.");
+      return;
+    }
+    if (!pay.senderPhone.trim() && !pay.payRef.trim()) {
+      toast.error("Enter the number you paid from, or the transaction / bank reference.");
       return;
     }
     manual.mutate();
@@ -219,7 +254,16 @@ export function BookCheckout({ slug }: { slug: string }) {
               </div>
             ) : null}
 
-            <PaymentMethodSection form={pay} amountLabel={price} itemNoun="book" />
+            {totalMinor > 0 ? (
+              <PaymentMethodSection form={pay} amountLabel={price} itemNoun="book" />
+            ) : (
+              <div className="flex gap-3 rounded-2xl border border-success/30 bg-success-soft p-4 text-sm">
+                <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-success" aria-hidden />
+                <p className="leading-relaxed">
+                  Your coupon covers the whole price — nothing to pay. Press <strong>Get the book</strong> to open it.
+                </p>
+              </div>
+            )}
 
             <section className="space-y-3 lg:hidden">
               <h2 className="text-base font-semibold text-[#0B1F3A] dark:text-white">Your book</h2>
@@ -244,7 +288,7 @@ export function BookCheckout({ slug }: { slug: string }) {
                   <p className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">{book.title}</p>
                   {book.author ? <p className="mt-0.5 text-xs text-muted-foreground">{book.author}</p> : null}
                   <p className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-                    <FileText className="h-3.5 w-3.5" aria-hidden /> PDF · read online or download
+                    <FileText className="h-3.5 w-3.5" aria-hidden /> Read on the site and in the app
                   </p>
                 </div>
               </div>
@@ -252,8 +296,14 @@ export function BookCheckout({ slug }: { slug: string }) {
               <dl className="mt-4 space-y-2.5 text-sm lg:mt-5">
                 <div className="flex justify-between gap-4 text-muted-foreground">
                   <dt>Subtotal</dt>
-                  <dd>{price}</dd>
+                  <dd>{formatMinor(book.price, book.currency)}</dd>
                 </div>
+                {couponCode && coupon && coupon.saved_minor > 0 ? (
+                  <div className="flex justify-between gap-4 font-medium text-[#0B1F3A] dark:text-[#FF8A66]">
+                    <dt>Coupon ({couponCode})</dt>
+                    <dd>−{formatMinor(coupon.saved_minor, book.currency)}</dd>
+                  </div>
+                ) : null}
                 <div className="border-t border-border pt-2.5">
                   <div className="flex justify-between gap-4 text-base font-bold text-foreground">
                     <dt>Total</dt>
@@ -263,8 +313,48 @@ export function BookCheckout({ slug }: { slug: string }) {
                 </div>
               </dl>
 
+              {authed ? (
+                <form
+                  className="mt-3 rounded-lg border border-[#0B1F3A]/15 bg-[#f5f8fd]/90 px-2.5 py-2 dark:border-white/20 dark:bg-[#143d6e]/50"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (couponInput.trim() && !applyCoupon.isPending) applyCoupon.mutate(couponInput);
+                  }}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      <Tag className="h-3 w-3" /> Promo code
+                    </span>
+                    {couponCode ? (
+                      <button
+                        type="button"
+                        className="text-[10px] font-medium text-[#0B1F3A] hover:underline dark:text-[#FF8A66]"
+                        onClick={() => {
+                          setCoupon(null);
+                          setCouponInput("");
+                        }}
+                      >
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <Input
+                      value={couponInput}
+                      onChange={(e) => setCouponInput(e.target.value)}
+                      placeholder="Code"
+                      className="h-8 min-w-0 flex-1 border-[#0B1F3A]/20 bg-white px-2.5 text-xs dark:border-white/15 dark:bg-[#143d6e]/70"
+                      disabled={applyCoupon.isPending}
+                    />
+                    <Button type="submit" variant="secondary" size="sm" className="h-8 shrink-0 px-3 text-xs font-semibold" disabled={applyCoupon.isPending || !couponInput.trim()}>
+                      {applyCoupon.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Apply"}
+                    </Button>
+                  </div>
+                </form>
+              ) : null}
+
               <p className="mt-3 text-[10px] leading-relaxed text-muted-foreground">
-                By paying you agree to our terms. With WaafiPay the book opens as soon as you confirm with your PIN.
+                By paying you agree to our terms. With WaafiPay the book opens as soon as you confirm with your PIN. Books are read on the site and in the app — they are not downloaded.
               </p>
 
               {!authed ? (
@@ -279,7 +369,7 @@ export function BookCheckout({ slug }: { slug: string }) {
               ) : (
                 <Button size="lg" className={`mt-5 h-11 w-full rounded-xl text-[15px] sm:h-12 sm:text-base ${PRIMARY}`} disabled={busy} onClick={submit}>
                   {busy ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Lock className="mr-2 h-4 w-4" />}
-                  {pay.method === "wafi" ? `Pay ${price}` : "Submit payment request"}
+                  {totalMinor <= 0 ? "Get the book" : pay.method === "wafi" ? `Pay ${price}` : "Submit payment request"}
                 </Button>
               )}
             </div>

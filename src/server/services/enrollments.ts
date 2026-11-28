@@ -5,7 +5,7 @@ import { isVdoCipherConfigured, requestVdoCipherOtp, VdoCipherNotConfiguredError
 import { ser } from "@/server/serialize";
 import { mapCourseList } from "./courses";
 import type { AuthUser } from "@/lib/auth/request";
-import * as coursesSvc from "./courses";
+import * as coupons from "./coupons";
 import { withLegacyPrice } from "@/server/legacy-prices";
 import { fromMinor, toMinor } from "@/server/money";
 import { decodeHtmlEntities } from "@/lib/html-entities";
@@ -32,11 +32,16 @@ async function activePricingAmount(courseId: string, couponCode?: string) {
   );
   if (!pricing) throw Err.notFound("pricing not found");
   let amount = pricing.isFree ? 0 : toMinor(pricing.discountPrice ?? pricing.price);
-  if (couponCode?.trim()) {
-    const preview = await coursesSvc.previewCoupon(courseId, couponCode);
-    if (preview.valid) amount = preview.amount_minor;
+  let couponId: string | null = null;
+  if (couponCode?.trim() && amount > 0) {
+    // A11: shared coupon rules; the coupon is kept on the payment and its use counted
+    const r = await coupons.evaluate(couponCode, "course", amount);
+    if (r.valid) {
+      amount = r.amount_minor;
+      couponId = r.coupon_id;
+    }
   }
-  return { amount, currency: pricing.currency };
+  return { amount, currency: pricing.currency, couponId };
 }
 
 export async function enroll(
@@ -53,7 +58,7 @@ export async function enroll(
   if (existing && hasCourseAccess(existing)) throw Err.alreadyEnrolled();
   await prerequisites.assertMet(user, courseId); // A5
 
-  const { amount, currency } = await activePricingAmount(courseId, couponCode);
+  const { amount, currency, couponId } = await activePricingAmount(courseId, couponCode);
   if (amount > 0) throw Err.paymentRequired();
 
   const t = now();
@@ -79,11 +84,13 @@ export async function enroll(
       currency,
       status: "paid",
       provider: "free",
+      couponId,
       paidAt: t,
       createdAt: t,
       updatedAt: t,
     },
   });
+  await coupons.countUse(couponId);
 
   notifyEnrolled(user.user_id, courseId);
   return {

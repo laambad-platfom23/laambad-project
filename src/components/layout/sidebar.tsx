@@ -36,6 +36,7 @@ import {
   NotebookPen,
   Megaphone,
   Star,
+  TicketPercent,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { paymentsApi } from "@/services/api/payments";
@@ -104,6 +105,7 @@ const staffNavItems: NavItem[] = [
     icon: CreditCard,
     // Instructors may open the page but see only their own; admin sees institute list.
   },
+  { label: "Coupons", href: "/dashboard/coupons", icon: TicketPercent, visible: (u) => isAdminUser(u) },
   { label: "Courses", href: "/dashboard/courses", icon: BookOpen },
   {
     label: "Course reviews",

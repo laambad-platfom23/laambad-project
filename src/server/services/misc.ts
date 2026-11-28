@@ -9,7 +9,7 @@ import { isWaafiPayConfigured, maskMobile, normalizeSomaliMobile, waafiPurchase 
 import { withLegacyPrice } from "@/server/legacy-prices";
 import { fromMinor, toMinor, toMinorOrNull } from "@/server/money";
 import { findBestEnrollment, hasCourseAccess } from "@/server/enrollment-status";
-import { previewCoupon } from "@/server/services/courses";
+import * as coupons from "@/server/services/coupons";
 import { decodeHtmlEntities } from "@/lib/html-entities";
 import { ser, toSlug } from "@/server/serialize";
 import type { AuthUser } from "@/lib/auth/request";
@@ -614,6 +614,7 @@ async function checkoutAmount(courseId: string, couponCode?: string) {
   const pricing = withLegacyPrice(
     await prisma.coursePricing.findFirst({
       where: { courseId, isActive: true, deletedAt: null },
+      orderBy: { updatedAt: "desc" },
     })
   );
   if (!pricing) throw Err.notFound("pricing not found");
@@ -622,16 +623,12 @@ async function checkoutAmount(courseId: string, couponCode?: string) {
   let amount = pricing.isFree ? 0 : toMinor(pricing.discountPrice ?? pricing.price);
   let couponId: string | null = null;
   if (couponCode?.trim()) {
-    // same rules as the checkout preview (percent / fixed, case-insensitive code, expiry, usage limit)
-    const preview = await previewCoupon(courseId, couponCode);
-    if (preview.valid) {
-      amount = preview.amount_minor;
-      const coupon = await prisma.coupon.findFirst({
-        where: { code: { equals: couponCode.trim(), mode: "insensitive" }, deletedAt: null },
-        select: { id: true },
-      });
-      couponId = coupon?.id ?? null;
-    }
+    // A11: the same rules as the preview (percent / fixed, scope, expiry, usage limit). A code that no
+    // longer applies is an error: never take the full price while the student expects the discount.
+    const r = await coupons.evaluate(couponCode, "course", amount);
+    if (!r.valid) throw Err.invalidInput(`coupon: ${r.message}`);
+    amount = r.amount_minor;
+    couponId = r.coupon_id;
   }
   return { course, amount: Math.max(0, amount), currency: pricing.currency || "USD", couponId };
 }
@@ -748,12 +745,15 @@ export async function createPayment(
       updatedAt: t,
     },
   });
-  if (amount === 0) await activateEnrollment(user.user_id, courseId, t);
+  if (amount === 0) {
+    await coupons.countUse(couponId);
+    await activateEnrollment(user.user_id, courseId, t);
+  }
   return paymentView(row);
 }
 
 /**
- * WaafiPay (EVC Plus / Zaad / Sahal / eDahab): the payer gets a USSD prompt and confirms with the PIN.
+ * WaafiPay (EVC Plus / Zaad / Sahal): the payer gets a USSD prompt and confirms with the PIN.
  * The amount is computed here, the payment row is written before the charge (referenceId = row id), and
  * access is granted only on an APPROVED answer. An unclear answer leaves the row pending for an admin.
  */
@@ -828,6 +828,7 @@ export async function payWithWaafi(
       where: { id: row.id, status: "pending" },
       data: { status: "paid", paidAt: t2, transactionId: outcome.transactionId || null, updatedAt: t2 },
     });
+    await coupons.countUse(couponId);
     await activateEnrollment(user.user_id, courseId, t2);
     return {
       ...paymentView({ ...row, status: "paid", transactionId: outcome.transactionId }),
@@ -869,10 +870,40 @@ export async function completePayment(paymentId: string, reference?: string) {
     where: { id: paymentId },
     data: { status: "paid", paidAt: t, updatedAt: t, ...(ref ? { transactionId: ref } : {}) },
   });
+  await coupons.countUse(p.couponId);
   // G11: migrated guest-checkout payments have no user; there is nobody to enroll.
   if (!p.userId) return { ok: true, enrolled: false };
   await activateEnrollment(p.userId, p.courseId, t);
   return { ok: true };
+}
+
+/**
+ * Admin (A11): put a coupon on a pending course order. The amount is recomputed from the course price;
+ * at 0 the order is settled and the course opens for the student.
+ */
+export async function adminApplyCouponToPayment(paymentId: string, code: string) {
+  const p = await prisma.payment.findFirst({ where: { id: paymentId, deletedAt: null } });
+  if (!p) throw Err.notFound("payment not found");
+  if (p.status !== "pending") throw Err.conflict("not_pending", "only pending orders can get a coupon");
+  const pricing = withLegacyPrice(
+    await prisma.coursePricing.findFirst({ where: { courseId: p.courseId, isActive: true, deletedAt: null }, orderBy: { updatedAt: "desc" } })
+  );
+  if (!pricing) throw Err.notFound("pricing not found");
+  const list = pricing.isFree ? 0 : toMinor(pricing.discountPrice ?? pricing.price);
+  const r = await coupons.evaluate(code, "course", list);
+  if (!r.valid) throw Err.invalidInput(`coupon: ${r.message}`);
+  const t = now();
+  if (r.amount_minor === 0) {
+    await prisma.payment.update({
+      where: { id: p.id },
+      data: { amount: fromMinor(0), couponId: r.coupon_id, status: "paid", paidAt: t, updatedAt: t },
+    });
+    await coupons.countUse(r.coupon_id);
+    if (p.userId) await activateEnrollment(p.userId, p.courseId, t);
+    return { ok: true, status: "paid", amount: 0 };
+  }
+  await prisma.payment.update({ where: { id: p.id }, data: { amount: fromMinor(r.amount_minor), couponId: r.coupon_id, updatedAt: t } });
+  return { ok: true, status: "pending", amount: r.amount_minor };
 }
 
 /** Admin: reject a pending payment request (money not received). Does not touch existing access. */

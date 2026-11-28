@@ -474,9 +474,12 @@ model Coupon {
   usageCount      BigInt    @default(0) @map("usage_count")
   isActive        Boolean   @default(true) @map("is_active")
   legacyWpId      BigInt?   @unique @map("legacy_wp_id")
+  /// A11: all | courses | books
+  appliesTo       String    @default("all") @map("applies_to") @db.VarChar(16)
 
   payments   Payment[]
   orderItems OrderItem[]
+  bookOrders BookOrder[]
 
   @@map("coupons")
 }
@@ -1060,9 +1063,12 @@ model BookOrder {
   paidAt        DateTime? @map("paid_at") @db.Timestamptz()
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt     DateTime  @default(now()) @map("updated_at") @db.Timestamptz()
+  /// A11
+  couponId      String?   @map("coupon_id") @db.Uuid
 
-  book Book @relation(fields: [bookId], references: [id])
-  user User @relation(fields: [userId], references: [id])
+  book   Book    @relation(fields: [bookId], references: [id])
+  user   User    @relation(fields: [userId], references: [id])
+  coupon Coupon? @relation(fields: [couponId], references: [id])
 
   @@index([userId, bookId], map: "book_orders_user_book_idx")
   @@index([status, createdAt(sort: Desc)], map: "book_orders_status_idx")

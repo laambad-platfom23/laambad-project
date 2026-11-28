@@ -97,7 +97,7 @@ export default function CatalogPage() {
       queryClient.invalidateQueries({ queryKey: ["dashboard-overview"] });
       queryClient.invalidateQueries({ queryKey: ["catalog-courses"] });
       queryClient.invalidateQueries({ queryKey: ["my-courses"] });
-      queryClient.invalidateQueries({ queryKey: ["my-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["my-orders"] });
       toast.success("You’re enrolled!");
     },
     onError: (err: unknown, courseId: string) => {

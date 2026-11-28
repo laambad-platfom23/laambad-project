@@ -17,6 +17,7 @@ import { Logo } from "@/components/ui/logo";
 import { cn } from "@/lib/utils";
 import { SODEMY_CONTACT } from "@/lib/sodemy-contact";
 import { useAuth } from "@/hooks/use-auth";
+import { MANUAL_PAYMENT, WAAFI_WALLETS } from "@/lib/payment-info";
 
 /**
  * The checkout has no site header, and it is often opened directly (a refresh, the link after signing
@@ -34,7 +35,7 @@ export function formatMinor(amount: number, currency: string) {
   }).format(amount / 100);
 }
 
-/** Somali mobile: 9 digits (61/77 EVC, 62/65 eDahab, 63 Zaad, 90 Sahal …); optional +252 / 0 prefix. Same rule as the server. */
+/** Somali mobile: 9 digits (61/77 EVC Plus, 63 Zaad, 90 Sahal …); optional +252 / 0 prefix. Same rule as the server. */
 export function isValidSomaliMobile(raw: string): boolean {
   let d = raw.replace(/\D/g, "");
   if (d.startsWith("00252")) d = d.slice(5);
@@ -126,7 +127,7 @@ export function PaymentMethodSection({ form, amountLabel, itemNoun }: { form: Pa
             onClick={() => setMethod("wafi")}
             icon={<Wallet className="h-5 w-5 shrink-0 text-muted-foreground" />}
             title="WaafiPay"
-            subtitle="EVC Plus · Zaad · Sahal · eDahab — pay now with your PIN"
+            subtitle={`${WAAFI_WALLETS} — pay now with your PIN`}
             badge="Instant"
           />
           {method === "wafi" ? (
@@ -177,21 +178,34 @@ export function PaymentMethodSection({ form, amountLabel, itemNoun }: { form: Pa
             title="Manual payment"
             subtitle={
               <>
-                EVC Plus to <span className="font-mono font-medium text-foreground">+252 61 9993660</span> · approved by admin
+                {MANUAL_PAYMENT.evc.label} <span className="font-mono font-medium text-foreground">{MANUAL_PAYMENT.evc.number}</span> ·{" "}
+                {MANUAL_PAYMENT.bank.label} <span className="font-mono font-medium text-foreground">{MANUAL_PAYMENT.bank.account}</span> · approved by
+                admin
               </>
             }
           />
           {method === "offline" ? (
             <div className="space-y-3 border-t border-[#0B1F3A]/10 bg-[#f8fafc] px-3 py-3 dark:border-white/15 dark:bg-[#0c1929]/55 sm:px-4">
               <p className="text-[13px] leading-snug text-muted-foreground">
-                Send <strong className="text-foreground">{amountLabel}</strong> with <strong className="text-foreground">EVC Plus</strong> to{" "}
-                <strong className="font-mono text-foreground">+252 61 9993660</strong>, then submit this form. We check the transfer and open your{" "}
-                {itemNoun} — usually within a few business hours.
+                Send <strong className="text-foreground">{amountLabel}</strong> to one of these, then submit this form. We check the transfer and
+                open your {itemNoun} — usually within a few business hours.
               </p>
+              <ul className="grid gap-2 sm:grid-cols-2">
+                <li className="rounded-lg border border-[#0B1F3A]/12 bg-white px-3 py-2 dark:border-white/15 dark:bg-[#143d6e]/40">
+                  <span className="block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{MANUAL_PAYMENT.evc.label}</span>
+                  <span className="font-mono text-[15px] font-semibold text-foreground">{MANUAL_PAYMENT.evc.number}</span>
+                </li>
+                <li className="rounded-lg border border-[#0B1F3A]/12 bg-white px-3 py-2 dark:border-white/15 dark:bg-[#143d6e]/40">
+                  <span className="block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {MANUAL_PAYMENT.bank.label} · account
+                  </span>
+                  <span className="font-mono text-[15px] font-semibold text-foreground">{MANUAL_PAYMENT.bank.account}</span>
+                </li>
+              </ul>
               <div className="grid gap-2.5 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="sender-phone" className="text-xs font-medium">
-                    Number you paid from
+                    Number you paid from <span className="font-normal text-muted-foreground">(EVC Plus)</span>
                   </Label>
                   <Input
                     id="sender-phone"
@@ -209,11 +223,11 @@ export function PaymentMethodSection({ form, amountLabel, itemNoun }: { form: Pa
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="pay-ref" className="text-xs font-medium">
-                    Transaction ID <span className="font-normal text-muted-foreground">(optional)</span>
+                    Transaction ID / bank reference
                   </Label>
                   <Input
                     id="pay-ref"
-                    placeholder="From the EVC SMS"
+                    placeholder="From the SMS or the bank receipt"
                     maxLength={64}
                     value={payRef}
                     onChange={(e) => setPayRef(e.target.value)}
@@ -335,7 +349,7 @@ export function ManualOrderDialog({ order, onClose, closeLabel }: { order: Manua
   const book = order?.kind === "book";
   const text = order
     ? [
-        `Asc, waxaan iibsaday ${book ? "buug" : "koorso"} Laambad (Manual payment / EVC Plus).`,
+        `Asc, waxaan iibsaday ${book ? "buug" : "koorso"} Laambad (Manual payment).`,
         `${book ? "Buugga" : "Koorsada"}: ${order.title}`,
         `Lacagta: ${order.amount}`,
         order.senderPhone ? `Lambarka aan ka diray: ${order.senderPhone}` : "",

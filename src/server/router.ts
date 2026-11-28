@@ -38,6 +38,8 @@ import * as learning from "@/server/services/learning";
 import * as discussions from "@/server/services/discussions";
 import * as learningPaths from "@/server/services/learning-paths";
 import * as books from "@/server/services/books";
+import * as orders from "@/server/services/orders";
+import * as coupons from "@/server/services/coupons";
 import * as whatsapp from "@/server/services/whatsapp";
 import * as passkeys from "@/server/services/passkeys";
 
@@ -463,7 +465,34 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
     if (v1 === "admin/payments/pending-count" && method === "GET") {
       const user = await requireAuth(req);
       requireRole(user, "admin");
-      return json(await misc.adminPendingPaymentsCount());
+      return json(await orders.pendingCount()); // A11: course + book orders
+    }
+    // ── A11: one list of orders (courses + books), 10 per page ──
+    if (v1 === "admin/orders" && method === "GET") {
+      const user = await requireAuth(req);
+      requireRole(user, "admin");
+      const { page, pageSize } = pageParams(url);
+      return json(
+        await orders.adminOrders(
+          { status: orders.parseStatus(url.searchParams.get("status")), kind: orders.parseKind(url.searchParams.get("type")), q: url.searchParams.get("q") },
+          page,
+          url.searchParams.get("page_size") ? pageSize : 10
+        )
+      );
+    }
+    if (v1.match(/^admin\/orders\/(course|book)\/[^/]+\/(approve|reject|coupon)$/) && method === "POST") {
+      const user = await requireAuth(req);
+      requireRole(user, "admin");
+      const [, , kind, id, action] = v1.split("/"); // admin / orders / <kind> / <id> / <action>
+      const body = (await readJson<{ reference?: string; reason?: string; code?: string }>(req).catch(() => ({}))) as {
+        reference?: string;
+        reason?: string;
+        code?: string;
+      };
+      const k = kind as orders.OrderKind;
+      if (action === "approve") return json(await orders.approve(k, id, body.reference));
+      if (action === "reject") return json(await orders.reject(k, id, body.reason));
+      return json(await orders.applyCoupon(k, id, body.code));
     }
     if (v1 === "admin/payments" && method === "GET") {
       const user = await requireAuth(req);
@@ -472,21 +501,27 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
       const result = await misc.adminListPayments(page, pageSize);
       return paginated(result.data, result.total, result.page);
     }
+    // ── A11: coupons (courses and books) ──
     if (v1 === "admin/coupons" && method === "GET") {
       const user = await requireAuth(req);
       requireRole(user, "admin");
-      return json(await misc.listCoupons());
+      const { page } = pageParams(url);
+      return json(await coupons.adminList({ q: url.searchParams.get("q"), status: url.searchParams.get("status"), page: Math.max(1, page), pageSize: 10 }));
     }
     if (v1 === "admin/coupons" && method === "POST") {
       const user = await requireAuth(req);
       requireRole(user, "admin");
-      const body = await readJson<{
-        code: string;
-        discount_percent: number;
-        expires_at?: string | null;
-        usage_limit?: number | null;
-      }>(req);
-      return json(await misc.createCoupon(body), 201);
+      return json(await coupons.adminCreate(await readJson(req)), 201);
+    }
+    if (v1.match(/^admin\/coupons\/[^/]+$/) && method === "PATCH") {
+      const user = await requireAuth(req);
+      requireRole(user, "admin");
+      return json(await coupons.adminUpdate(v1.split("/")[2], await readJson(req)));
+    }
+    if (v1.match(/^admin\/coupons\/[^/]+$/) && method === "DELETE") {
+      const user = await requireAuth(req);
+      requireRole(user, "admin");
+      return json(await coupons.adminDelete(v1.split("/")[2]));
     }
     if (v1 === "admin/audit-logs" && method === "GET") {
       const user = await requireAuth(req);
@@ -1307,6 +1342,19 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
       return json(await learningPaths.deletePath(v1.split("/")[1]));
     }
 
+    // ── A11: my orders (courses + books), 10 per page ──
+    if (v1 === "my/orders" && method === "GET") {
+      const user = await requireAuth(req);
+      const { page } = pageParams(url);
+      return json(
+        await orders.myOrders(user.user_id, { status: orders.parseStatus(url.searchParams.get("status")), kind: orders.parseKind(url.searchParams.get("type")) }, page, 10)
+      );
+    }
+    if (v1.match(/^books\/[^/]+\/coupon-preview$/) && method === "POST") {
+      await requireAuth(req);
+      const body = await readJson<{ code?: string }>(req);
+      return json(await books.previewCoupon(v1.split("/")[1], String(body?.code ?? "")));
+    }
     // ── A2: books ──
     if (v1 === "my-books" && method === "GET") {
       const user = await requireAuth(req);

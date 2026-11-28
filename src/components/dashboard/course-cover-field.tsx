@@ -95,8 +95,7 @@ export function CourseCoverField({ id, value, onChange, className }: Props) {
       <div>
         <Label htmlFor={id}>Course image</Label>
         <p className="mt-1 text-xs text-muted-foreground">
-          Upload stores the image under <code className="rounded bg-muted px-1">public/uploads/courses</code>
-          ). You can also paste a public image URL.
+          Upload a JPG, PNG or WebP image (large photos are reduced automatically), or paste an image address. Best size: 1280 × 720.
         </p>
       </div>
 
