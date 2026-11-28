@@ -1,5 +1,5 @@
 /** A5: course approval, prerequisites, certificate templates, bundles, live sessions (Google Meet). */
-import apiClient from "./client";
+import apiClient, { personalGet } from "./client";
 import type { CertificateDesign } from "@/lib/certificate-render";
 
 // ── course review ──
@@ -91,8 +91,8 @@ export type BundleOrder = {
   created_at: string;
 };
 export const bundleApi = {
-  list: () => apiClient.get<Bundle[]>("/api/bundles"),
-  get: (slug: string) => apiClient.get<Bundle>(`/api/bundles/${encodeURIComponent(slug)}`),
+  list: () => personalGet<Bundle[]>("/api/v1/bundles", "/api/bundles"),
+  get: (slug: string) => personalGet<Bundle>(`/api/v1/bundles/${encodeURIComponent(slug)}`, `/api/bundles/${encodeURIComponent(slug)}`),
   enrollFree: (id: string) => apiClient.post(`/api/v1/bundles/${id}/enroll`),
   payWaafi: (id: string, phone: string) =>
     apiClient.post<{ outcome: "approved" | "declined" | "unknown"; message: string }>(`/api/v1/bundles/${id}/pay/waafi`, { phone }, { timeout: 160_000 }),

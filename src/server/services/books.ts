@@ -3,7 +3,8 @@
  *
  * Security:
  *  - the stored file location (books.file_url) is NEVER sent to the browser; the PDF is streamed
- *    through GET /api/v1/books/:id/file after an access check;
+ *    through GET /api/v1/books/:id/file after an access check, in parts (HTTP Range) for the in-app
+ *    pdf.js reader. Books are read, not downloaded (A12): no download link, the reader draws pages;
  *  - on Vercel the PDF goes to Blob under books-private/<book id>/<256-bit random>.pdf (unguessable);
  *    locally it is written to .private-uploads/ (outside public/);
  *  - paid access only after an APPROVED WaafiPay answer or an admin approval of a manual EVC request.
@@ -17,6 +18,7 @@ import type { AuthUser } from "@/lib/auth/request";
 import { fromMinor, toMinor } from "@/server/money";
 import { isWaafiPayConfigured, normalizeSomaliMobile, waafiPurchase } from "@/server/waafipay";
 import { slugify } from "./learning-paths";
+import { decodeHtmlEntities } from "@/lib/html-entities";
 import { assertUuid, isUuid } from "@/lib/uuid";
 import { notifyBook, notifyPaymentRejected } from "@/server/notify";
 import * as coupons from "@/server/services/coupons";
@@ -43,7 +45,7 @@ function priceMinor(b: Pick<BookRow, "isFree" | "price">) {
 }
 
 /** Has this user paid for / may read this book? */
-async function hasAccess(user: AuthUser, b: BookRow) {
+export async function hasAccess(user: AuthUser, b: BookRow) {
   if (user.role === "admin") return true;
   if (b.status !== "published" || b.deletedAt) return false;
   if (priceMinor(b) === 0) return true;
@@ -54,7 +56,16 @@ async function hasAccess(user: AuthUser, b: BookRow) {
   return !!paid;
 }
 
-function view(b: BookRow, extra?: { owned?: boolean; pending?: boolean; admin?: boolean }) {
+type Extra = {
+  owned?: boolean;
+  pending?: boolean;
+  admin?: boolean;
+  rating?: { average: number; count: number };
+  course?: { id: string; title: string; slug: string } | null;
+  progress?: { last_page: number; percent: number } | null;
+};
+
+function view(b: BookRow, extra?: Extra) {
   return {
     id: b.id,
     title: b.title,
@@ -69,10 +80,45 @@ function view(b: BookRow, extra?: { owned?: boolean; pending?: boolean; admin?: 
     has_file: !!b.fileUrl,
     file_size: b.fileSize != null ? Number(b.fileSize) : null,
     created_at: b.createdAt.toISOString(),
+    page_count: b.pageCount ?? null,
+    rating: extra?.rating ?? { average: 0, count: 0 },
+    /** A12: "Practise what this book teaches" */
+    course: extra?.course ?? null,
+    ...(extra?.progress !== undefined ? { progress: extra.progress } : {}),
     ...(extra?.owned !== undefined ? { owned: extra.owned } : {}),
     ...(extra?.pending !== undefined ? { payment_pending: extra.pending } : {}),
-    ...(extra?.admin ? { file_name: b.fileName } : {}),
+    ...(extra?.admin ? { file_name: b.fileName, course_id: b.courseId } : {}),
   };
+}
+
+/** Ratings, related courses and (for a signed-in reader) progress of a list of books, in 3 queries. */
+async function decorations(rows: BookRow[], userId: string | null) {
+  const ids = rows.map((r) => r.id);
+  const courseIds = [...new Set(rows.map((r) => r.courseId).filter((x): x is string => !!x))];
+  const [ratings, courses, progress] = await Promise.all([
+    ids.length
+      ? prisma.bookReview.groupBy({ by: ["bookId"], where: { bookId: { in: ids }, deletedAt: null }, _avg: { rating: true }, _count: { _all: true } })
+      : Promise.resolve([]),
+    courseIds.length
+      ? prisma.course.findMany({ where: { id: { in: courseIds }, deletedAt: null, status: "published" }, select: { id: true, title: true, slug: true } })
+      : Promise.resolve([]),
+    userId && ids.length
+      ? prisma.bookProgress.findMany({ where: { userId, bookId: { in: ids } }, select: { bookId: true, lastPage: true, pageCount: true } })
+      : Promise.resolve([]),
+  ]);
+  const rating = new Map(ratings.map((r) => [r.bookId, { average: Math.round((r._avg.rating ?? 0) * 10) / 10, count: r._count._all }]));
+  const course = new Map(courses.map((c) => [c.id, { id: c.id, title: decodeHtmlEntities(c.title), slug: c.slug }]));
+  const prog = new Map(
+    progress.map((p) => {
+      const total = p.pageCount ?? 0;
+      return [p.bookId, { last_page: p.lastPage, percent: total ? Math.min(100, Math.round((p.lastPage / total) * 100)) : 0 }];
+    })
+  );
+  return (b: BookRow) => ({
+    rating: rating.get(b.id) ?? { average: 0, count: 0 },
+    course: b.courseId ? course.get(b.courseId) ?? null : null,
+    ...(userId ? { progress: prog.get(b.id) ?? null } : {}),
+  });
 }
 
 async function ownership(userId: string, bookIds: string[]) {
@@ -95,10 +141,12 @@ export async function listBooks(user: AuthUser | null) {
     orderBy: { createdAt: "desc" },
     take: 500,
   });
-  if (!user) return rows.map((b) => view(b));
+  const deco = await decorations(rows, user?.user_id ?? null);
+  if (!user) return rows.map((b) => view(b, deco(b)));
   const own = await ownership(user.user_id, rows.map((r) => r.id));
   return rows.map((b) =>
     view(b, {
+      ...deco(b),
       owned: admin || priceMinor(b) === 0 || own.paid.has(b.id),
       pending: own.pending.has(b.id),
       admin,
@@ -110,26 +158,36 @@ export async function getBook(user: AuthUser | null, slugOrId: string) {
   const b = await prisma.book.findFirst({ where: { deletedAt: null, ...(isUuid(slugOrId) ? { id: slugOrId } : { slug: slugOrId }) } });
   const admin = user?.role === "admin";
   if (!b || (!admin && b.status !== "published")) throw Err.notFound("book not found");
-  if (!user) return view(b);
+  const deco = (await decorations([b], user?.user_id ?? null))(b);
+  if (!user) return view(b, deco);
   const own = await ownership(user.user_id, [b.id]);
-  return view(b, { owned: admin || priceMinor(b) === 0 || own.paid.has(b.id), pending: own.pending.has(b.id), admin });
+  return view(b, { ...deco, owned: admin || priceMinor(b) === 0 || own.paid.has(b.id), pending: own.pending.has(b.id), admin });
 }
 
-/** Books the user can read (free ones they opened are not tracked: this lists purchases). */
+/** My books: bought (or waiting for approval) and free books I have opened, most recent first. */
 export async function myBooks(user: AuthUser) {
-  const orders = await prisma.bookOrder.findMany({
-    where: { userId: user.user_id, status: { in: ["paid", "pending"] } },
-    orderBy: { createdAt: "desc" },
-    include: { book: true },
-  });
-  const seen = new Set<string>();
-  const out = [];
-  for (const o of orders) {
-    if (!o.book || o.book.deletedAt || seen.has(o.bookId)) continue;
-    seen.add(o.bookId);
-    out.push(view(o.book, { owned: o.status === "paid", pending: o.status === "pending" }));
+  const [orders, opened] = await Promise.all([
+    prisma.bookOrder.findMany({
+      where: { userId: user.user_id, status: { in: ["paid", "pending"] } },
+      orderBy: { createdAt: "desc" },
+      include: { book: true },
+    }),
+    prisma.bookProgress.findMany({ where: { userId: user.user_id }, orderBy: { updatedAt: "desc" }, include: { book: true } }),
+  ]);
+  const seen = new Map<string, { b: BookRow; owned: boolean; pending: boolean }>();
+  for (const p of opened) {
+    if (!p.book || p.book.deletedAt || p.book.status !== "published") continue;
+    seen.set(p.bookId, { b: p.book, owned: priceMinor(p.book) === 0, pending: false });
   }
-  return out;
+  for (const o of orders) {
+    if (!o.book || o.book.deletedAt) continue;
+    const cur = seen.get(o.bookId);
+    if (cur?.owned && priceMinor(o.book) > 0) continue;
+    seen.set(o.bookId, { b: o.book, owned: (cur?.owned ?? false) || o.status === "paid", pending: o.status === "pending" && !cur?.owned });
+  }
+  const list = [...seen.values()];
+  const deco = await decorations(list.map((x) => x.b), user.user_id);
+  return list.map((x) => view(x.b, { ...deco(x.b), owned: x.owned, pending: x.pending }));
 }
 
 // ── Admin ──
@@ -143,6 +201,9 @@ type BookInput = {
   is_free?: boolean;
   price?: number; // cents
   status?: string;
+  /** A12: related course ("Practise what this book teaches"), or null */
+  course_id?: string | null;
+  page_count?: number | null;
 };
 
 function cleanBook(input: BookInput) {
@@ -169,11 +230,28 @@ function cleanBook(input: BookInput) {
     if (!["draft", "published"].includes(String(input.status))) throw Err.invalidInput("invalid status");
     data.status = String(input.status);
   }
+  if (input.course_id !== undefined) {
+    const c = String(input.course_id ?? "").trim();
+    if (c && !isUuid(c)) throw Err.invalidInput("invalid course");
+    data.courseId = c || null;
+  }
+  if (input.page_count !== undefined) {
+    const n = input.page_count == null ? null : Math.round(Number(input.page_count));
+    if (n != null && (!Number.isFinite(n) || n < 1 || n > 20_000)) throw Err.invalidInput("invalid page count");
+    data.pageCount = n;
+  }
   return data;
+}
+
+async function assertCourse(courseId: unknown) {
+  if (!courseId) return;
+  const c = await prisma.course.findFirst({ where: { id: String(courseId), deletedAt: null }, select: { id: true } });
+  if (!c) throw Err.invalidInput("the related course was not found");
 }
 
 export async function createBook(user: AuthUser, input: BookInput) {
   const data = cleanBook(input);
+  await assertCourse(data.courseId);
   if (!data.title) throw Err.invalidInput("title is required");
   if (data.isFree === false && !(data.price && toMinor(data.price as never) > 0)) {
     throw Err.invalidInput("a paid book needs a price");
@@ -197,6 +275,7 @@ export async function updateBook(id: string, input: BookInput) {
   const b = await prisma.book.findFirst({ where: { id, deletedAt: null } });
   if (!b) throw Err.notFound("book not found");
   const data = cleanBook(input);
+  await assertCourse(data.courseId);
   if (input.slug !== undefined && input.slug.trim() && slugify(input.slug) !== b.slug) {
     data.slug = await uniqueBookSlug(input.slug, id);
   }
@@ -306,34 +385,49 @@ export async function uploadServerFile(bookId: string, file: File) {
   return view(row, { admin: true });
 }
 
-/** Stream the PDF to a user who may read it. The storage URL never leaves the server. */
-export async function streamFile(user: AuthUser, bookId: string, download: boolean): Promise<Response> {
+/**
+ * Stream the PDF to a user who may read it, for the in-app reader (A12): always "inline", never as a
+ * download, and in parts — pdf.js asks for byte ranges, so a 200-page book opens without loading all of
+ * it first. The storage URL never leaves the server.
+ */
+export async function streamFile(user: AuthUser, bookId: string, range?: string | null): Promise<Response> {
   assertUuid(bookId, "book not found");
   const b = await prisma.book.findFirst({ where: { id: bookId, deletedAt: null } });
   if (!b || !b.fileUrl) throw Err.notFound("book not found");
   if (!(await hasAccess(user, b))) {
     throw new ApiError(402, "payment_required", "buy this book to read it");
   }
-  const fileName = (b.fileName || `${b.slug}.pdf`).replace(/"/g, "");
   const headers = new Headers({
     "Content-Type": "application/pdf",
-    "Content-Disposition": `${download ? "attachment" : "inline"}; filename="${fileName}"`,
+    "Content-Disposition": "inline",
     "Cache-Control": "private, no-store",
     "X-Content-Type-Options": "nosniff",
+    "Accept-Ranges": "bytes",
   });
+  const want = /^bytes=(\d+)-(\d*)$/.exec(String(range ?? "").trim());
   if (b.fileUrl.startsWith("local:")) {
     const name = b.fileUrl.slice("local:".length);
     if (!/^[0-9a-f]{64}\.pdf$/.test(name)) throw Err.notFound("book not found");
     const data = await readFile(path.join(LOCAL_DIR, name)).catch(() => null);
     if (!data) throw Err.notFound("book file missing");
+    if (want) {
+      const start = Number(want[1]);
+      const end = Math.min(data.length - 1, want[2] ? Number(want[2]) : data.length - 1);
+      if (start >= data.length || start > end) return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${data.length}` } });
+      headers.set("Content-Range", `bytes ${start}-${end}/${data.length}`);
+      headers.set("Content-Length", String(end - start + 1));
+      return new Response(new Uint8Array(data.subarray(start, end + 1)), { status: 206, headers });
+    }
     headers.set("Content-Length", String(data.length));
     return new Response(new Uint8Array(data), { status: 200, headers });
   }
-  const upstream = await fetch(b.fileUrl).catch(() => null);
-  if (!upstream || !upstream.ok || !upstream.body) throw new ApiError(502, "file_unavailable", "could not load the book, try again");
+  const upstream = await fetch(b.fileUrl, want ? { headers: { Range: `bytes=${want[1]}-${want[2]}` } } : undefined).catch(() => null);
+  if (!upstream || !(upstream.ok || upstream.status === 206) || !upstream.body) throw new ApiError(502, "file_unavailable", "could not load the book, try again");
   const len = upstream.headers.get("content-length");
   if (len) headers.set("Content-Length", len);
-  return new Response(upstream.body, { status: 200, headers });
+  const cr = upstream.headers.get("content-range");
+  if (upstream.status === 206 && cr) headers.set("Content-Range", cr);
+  return new Response(upstream.body, { status: upstream.status === 206 ? 206 : 200, headers });
 }
 
 // ── Buying ──

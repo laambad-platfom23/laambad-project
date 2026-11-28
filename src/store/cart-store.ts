@@ -31,7 +31,7 @@ export function cartCheckoutHref(line: Pick<CartLine, "kind" | "slug">) {
 
 /** The page of the item itself. */
 export function cartItemHref(line: Pick<CartLine, "kind" | "slug">) {
-  return line.kind === "book" ? `/dashboard/books?book=${encodeURIComponent(line.slug)}` : `/courses/${encodeURIComponent(line.slug)}`;
+  return line.kind === "book" ? `/books/${encodeURIComponent(line.slug)}` : `/courses/${encodeURIComponent(line.slug)}`;
 }
 
 /** Carts saved before books could be added hold course lines only: { courseId, slug, title, … }. */

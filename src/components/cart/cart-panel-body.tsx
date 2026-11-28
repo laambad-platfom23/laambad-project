@@ -47,7 +47,7 @@ export function CartPanelBody({ variant = "page", onNavigate }: CartPanelBodyPro
               </Link>
             </Button>
             <Button asChild size="sm" variant="outline">
-              <Link href="/dashboard/books" onClick={navClick}>
+              <Link href="/books" onClick={navClick}>
                 Browse books
               </Link>
             </Button>
@@ -65,7 +65,7 @@ export function CartPanelBody({ variant = "page", onNavigate }: CartPanelBodyPro
             <Link href="/courses">Browse courses</Link>
           </Button>
           <Button asChild variant="outline">
-            <Link href="/dashboard/books">Browse books</Link>
+            <Link href="/books">Browse books</Link>
           </Button>
         </div>
       </div>

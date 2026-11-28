@@ -14,6 +14,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { booksApi, type Book } from "@/services/api/student-features";
 import { uploadsApi } from "@/services/api/uploads";
+import { coursesApi } from "@/services/api/courses";
+import { shrinkImage } from "@/components/dashboard/asset-upload-button";
 import { useAuthStore } from "@/store/auth-store";
 import { isAdminUser } from "@/lib/auth-routing";
 import { cn, formatDateTime, getApiErrorMessage } from "@/lib/utils";
@@ -188,7 +190,14 @@ function BookEditor({ book, onClose, onSaved }: { book: Book | null; onClose: ()
   const [isFree, setIsFree] = useState(book?.is_free ?? true);
   const [price, setPrice] = useState(book && !book.is_free ? String(book.price / 100) : "");
   const [published, setPublished] = useState(book?.status === "published");
+  const [courseId, setCourseId] = useState(book?.course_id ?? "");
   const [uploading, setUploading] = useState<string | null>(null);
+  // A12: "Practise what this book teaches" — any course can be linked
+  const courses = useQuery({
+    queryKey: ["book-related-courses"],
+    queryFn: () => coursesApi.list(1, 200, false).then((r) => (r.data.data ?? []) as { id: string; title: string }[]),
+    staleTime: 5 * 60_000,
+  });
   const pdfRef = useRef<HTMLInputElement>(null);
   const coverRef = useRef<HTMLInputElement>(null);
 
@@ -203,6 +212,7 @@ function BookEditor({ book, onClose, onSaved }: { book: Book | null; onClose: ()
         is_free: isFree,
         price: isFree ? 0 : cents,
         status: (published ? "published" : "draft") as "draft" | "published",
+        course_id: courseId || null,
       };
       if (current) return (await booksApi.update(current.id, data)).data;
       // a new book starts as a draft: the PDF is uploaded after it exists
@@ -244,9 +254,20 @@ function BookEditor({ book, onClose, onSaved }: { book: Book | null; onClose: ()
         setUploading("Uploading…");
         updated = (await booksApi.uploadServer(current.id, file)).data;
       }
+      // A12: count the pages here (pdf.js reads the local file) so the book page can show them
+      try {
+        setUploading("Counting pages…");
+        const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+        pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/legacy/build/pdf.worker.min.mjs", import.meta.url).toString();
+        const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+        updated = (await booksApi.update(current.id, { page_count: doc.numPages })).data;
+        void doc.destroy();
+      } catch {
+        /* the reader fills it in when the book is first opened */
+      }
       setCurrent(updated);
       onSaved();
-      toast.success("PDF uploaded");
+      toast.success(updated.page_count ? `PDF uploaded · ${updated.page_count} pages` : "PDF uploaded");
     } catch (e) {
       toast.error(getApiErrorMessage(e, e instanceof Error ? e.message : "Upload failed"));
     } finally {
@@ -258,7 +279,7 @@ function BookEditor({ book, onClose, onSaved }: { book: Book | null; onClose: ()
   const uploadCover = async (file: File) => {
     try {
       setUploading("Uploading cover…");
-      const r = await uploadsApi.uploadMedia(file, "assets");
+      const r = await uploadsApi.uploadMedia(await shrinkImage(file), "assets");
       setCoverUrl(r.url);
     } catch (e) {
       toast.error(getApiErrorMessage(e, "Could not upload the cover"));
@@ -300,6 +321,23 @@ function BookEditor({ book, onClose, onSaved }: { book: Book | null; onClose: ()
               </Button>
             </div>
           </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="bk-course">Related course (optional)</Label>
+            <select
+              id="bk-course"
+              value={courseId}
+              onChange={(e) => setCourseId(e.target.value)}
+              className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+            >
+              <option value="">None</option>
+              {(courses.data ?? []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.title}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">Shown on the book page as “Practise what this book teaches”.</p>
+          </div>
           <div className="flex flex-wrap items-end gap-4">
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={isFree} onChange={(e) => setIsFree(e.target.checked)} />
@@ -318,7 +356,7 @@ function BookEditor({ book, onClose, onSaved }: { book: Book | null; onClose: ()
               <p className="text-sm font-medium">PDF file</p>
               <p className="text-xs text-muted-foreground">
                 {current.has_file
-                  ? `${current.file_name ?? "book.pdf"}${current.file_size ? ` · ${(current.file_size / 1048576).toFixed(1)} MB` : ""}`
+                  ? `${current.file_name ?? "book.pdf"}${current.file_size ? ` · ${(current.file_size / 1048576).toFixed(1)} MB` : ""}${current.page_count ? ` · ${current.page_count} pages` : ""}`
                   : "No PDF uploaded yet. Students never see the file address."}
               </p>
               <input ref={pdfRef} type="file" accept="application/pdf" className="hidden" onChange={(e) => e.target.files?.[0] && uploadPdf(e.target.files[0])} />

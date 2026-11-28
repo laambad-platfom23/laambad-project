@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { ApiError, Err } from "@/lib/api/errors";
-import { json, publicJson, noContent, paginated, wrapped, handleError } from "@/lib/api/response";
+import { json, publicJson, noContent, paginated, wrapped, handleError, publicJsonVary, personalJson } from "@/lib/api/response";
 import {
   requireAuth,
   requireRole,
@@ -39,6 +39,7 @@ import * as discussions from "@/server/services/discussions";
 import * as learningPaths from "@/server/services/learning-paths";
 import * as books from "@/server/services/books";
 import * as orders from "@/server/services/orders";
+import * as bookReading from "@/server/services/book-reading";
 import * as coupons from "@/server/services/coupons";
 import * as whatsapp from "@/server/services/whatsapp";
 import * as passkeys from "@/server/services/passkeys";
@@ -178,32 +179,36 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
     // ── A2: learning paths + books (public lists; personal flags when signed in) ──
     if (path === "learning-paths" && method === "GET") {
       const user = await optionalAuth(req);
-      return user ? json(await learningPaths.listPaths(user)) : publicJson(await learningPaths.listPaths(null), 300);
+      return user ? personalJson(await learningPaths.listPaths(user)) : publicJsonVary(await learningPaths.listPaths(null), 300);
     }
     if (path.match(/^learning-paths\/[^/]+$/) && method === "GET") {
       const user = await optionalAuth(req);
       const slug = decodeURIComponent(path.split("/")[1]);
-      return user ? json(await learningPaths.getPath(user, slug)) : publicJson(await learningPaths.getPath(null, slug), 300);
+      return user ? personalJson(await learningPaths.getPath(user, slug)) : publicJsonVary(await learningPaths.getPath(null, slug), 300);
     }
     if (path === "books" && method === "GET") {
       const user = await optionalAuth(req);
-      return user ? json(await books.listBooks(user)) : publicJson(await books.listBooks(null), 300);
+      return user ? personalJson(await books.listBooks(user)) : publicJsonVary(await books.listBooks(null), 300);
+    }
+    // ── A12: anyone reads the reviews of a published book ──
+    if (path.match(/^books\/[^/]+\/reviews$/) && method === "GET") {
+      return publicJson(await bookReading.publicReviews(path.split("/")[1], Number(url.searchParams.get("page") || 1)), 300);
     }
     if (path.match(/^books\/[^/]+$/) && method === "GET") {
       const user = await optionalAuth(req);
       const slug = decodeURIComponent(path.split("/")[1]);
-      return user ? json(await books.getBook(user, slug)) : publicJson(await books.getBook(null, slug), 300);
+      return user ? personalJson(await books.getBook(user, slug)) : publicJsonVary(await books.getBook(null, slug), 300);
     }
 
     // ── A5: bundles (public list; owned flags when signed in) ──
     if (path === "bundles" && method === "GET") {
       const user = await optionalAuth(req);
-      return user ? json(await bundles.listBundles(user)) : publicJson(await bundles.listBundles(null), 300);
+      return user ? personalJson(await bundles.listBundles(user)) : publicJsonVary(await bundles.listBundles(null), 300);
     }
     if (path.match(/^bundles\/[^/]+$/) && method === "GET") {
       const user = await optionalAuth(req);
       const slug = decodeURIComponent(path.split("/")[1]);
-      return user ? json(await bundles.getBundle(user, slug)) : publicJson(await bundles.getBundle(null, slug), 300);
+      return user ? personalJson(await bundles.getBundle(user, slug)) : publicJsonVary(await bundles.getBundle(null, slug), 300);
     }
     // ── A5: Google OAuth callback (redirect back to the live-sessions page) ──
     if (path === "google/oauth/callback" && method === "GET") {
@@ -1342,6 +1347,21 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
       return json(await learningPaths.deletePath(v1.split("/")[1]));
     }
 
+    // ── Phase 2: the signed-in answer of the public books / diplomas / learning paths (never cached) ──
+    if ((v1 === "books" || v1 === "bundles" || v1 === "learning-paths") && method === "GET") {
+      const user = await requireAuth(req);
+      if (v1 === "books") return personalJson(await books.listBooks(user));
+      if (v1 === "bundles") return personalJson(await bundles.listBundles(user));
+      return personalJson(await learningPaths.listPaths(user));
+    }
+    if (v1.match(/^(books|bundles|learning-paths)\/[^/]+$/) && method === "GET") {
+      const user = await requireAuth(req);
+      const [kind, raw] = v1.split("/");
+      const slug = decodeURIComponent(raw);
+      if (kind === "books") return personalJson(await books.getBook(user, slug));
+      if (kind === "bundles") return personalJson(await bundles.getBundle(user, slug));
+      return personalJson(await learningPaths.getPath(user, slug));
+    }
     // ── A11: my orders (courses + books), 10 per page ──
     if (v1 === "my/orders" && method === "GET") {
       const user = await requireAuth(req);
@@ -1349,6 +1369,27 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
       return json(
         await orders.myOrders(user.user_id, { status: orders.parseStatus(url.searchParams.get("status")), kind: orders.parseKind(url.searchParams.get("type")) }, page, 10)
       );
+    }
+    // ── A12: reading progress + bookmarks, reviews ──
+    if (v1.match(/^books\/[^/]+\/progress$/) && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await bookReading.getProgress(user, v1.split("/")[1]));
+    }
+    if (v1.match(/^books\/[^/]+\/progress$/) && method === "PUT") {
+      const user = await requireAuth(req);
+      return json(await bookReading.saveProgress(user, v1.split("/")[1], (await readJson(req)) ?? {}));
+    }
+    if (v1.match(/^books\/[^/]+\/reviews\/mine$/) && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await bookReading.myReview(user, v1.split("/")[1]));
+    }
+    if (v1.match(/^books\/[^/]+\/reviews$/) && method === "POST") {
+      const user = await requireAuth(req);
+      return json(await bookReading.saveReview(user, v1.split("/")[1], (await readJson(req)) ?? {}), 201);
+    }
+    if (v1.match(/^book-reviews\/[^/]+$/) && method === "DELETE") {
+      const user = await requireAuth(req);
+      return json(await bookReading.deleteReview(user, v1.split("/")[1]));
     }
     if (v1.match(/^books\/[^/]+\/coupon-preview$/) && method === "POST") {
       await requireAuth(req);
@@ -1363,7 +1404,8 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
     if (v1.match(/^books\/[^/]+\/file$/) && method === "GET") {
       const user = await requireAuth(req);
       await auth.requireVerifiedEmail(user);
-      return await books.streamFile(user, v1.split("/")[1], url.searchParams.get("download") === "1");
+      // A12: read in the app only (inline), in parts for pdf.js (HTTP Range)
+      return await books.streamFile(user, v1.split("/")[1], req.headers.get("range"));
     }
     if (v1.match(/^books\/[^/]+\/pay\/waafi$/) && method === "POST") {
       const user = await requireAuth(req);

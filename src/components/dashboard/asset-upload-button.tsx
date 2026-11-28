@@ -17,7 +17,7 @@ const MAX_UPLOAD = 4_400_000;
  * Photos straight from a phone are often 3–8 MB: shrink JPG / PNG / WebP to ≤ 1920 px (JPEG 85 %) in the
  * browser before uploading. Small images, GIFs and anything that does not get smaller are left alone.
  */
-async function shrinkImage(f: File): Promise<File> {
+export async function shrinkImage(f: File): Promise<File> {
   if (!/^image\/(jpeg|png|webp)$/i.test(f.type) || f.size <= 1_500_000) return f;
   try {
     const bmp = await createImageBitmap(f);

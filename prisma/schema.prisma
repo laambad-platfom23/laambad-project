@@ -71,6 +71,9 @@ model User {
   announcements      CourseAnnouncement[]
 
   @@index([passwordScheme])
+  bookProgress BookProgress[]
+  bookReviews  BookReview[]
+
   @@map("users")
 }
 
@@ -234,6 +237,8 @@ model Course {
 
   @@index([instructorId, status])
   @@index([legacyProductId])
+  books Book[]
+
   @@map("courses")
 }
 
@@ -1043,10 +1048,51 @@ model Book {
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt   DateTime  @default(now()) @map("updated_at") @db.Timestamptz()
   deletedAt   DateTime? @map("deleted_at") @db.Timestamptz()
+  /// A12
+  pageCount   Int?      @map("page_count")
+  /// A12: "Practise what this book teaches"
+  courseId    String?   @map("course_id") @db.Uuid
 
-  orders BookOrder[]
+  orders   BookOrder[]
+  course   Course?        @relation(fields: [courseId], references: [id])
+  progress BookProgress[]
+  reviews  BookReview[]
 
   @@map("books")
+}
+
+/// A12: where a reader is in a book, and their bookmarks (page numbers)
+model BookProgress {
+  userId    String   @map("user_id") @db.Uuid
+  bookId    String   @map("book_id") @db.Uuid
+  lastPage  Int      @default(1) @map("last_page")
+  pageCount Int?     @map("page_count")
+  bookmarks Json     @default("[]")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id])
+  book Book @relation(fields: [bookId], references: [id])
+
+  @@id([userId, bookId])
+  @@map("book_progress")
+}
+
+/// A12: one review per reader and book (partial unique index in SQL)
+model BookReview {
+  id        String    @id @db.Uuid
+  bookId    String    @map("book_id") @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  rating    Int       @db.SmallInt
+  comment   String?   @db.Text
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime  @default(now()) @map("updated_at") @db.Timestamptz()
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz()
+
+  book Book @relation(fields: [bookId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("book_reviews")
 }
 
 model BookOrder {

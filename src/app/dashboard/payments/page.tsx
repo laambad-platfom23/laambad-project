@@ -112,7 +112,7 @@ function MyPayments() {
               const Icon = o.kind === "book" ? BookOpen : GraduationCap;
               const href = o.item_slug
                 ? o.kind === "book"
-                  ? `/dashboard/books?book=${encodeURIComponent(o.item_slug)}`
+                  ? `/books/${encodeURIComponent(o.item_slug)}`
                   : `/courses/${encodeURIComponent(o.item_slug)}`
                 : null;
               return (

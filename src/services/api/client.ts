@@ -145,3 +145,21 @@ apiClient.interceptors.response.use(
 );
 
 export default apiClient;
+
+/**
+ * Phase 2: some public pages answer differently once signed in (owned books, bought diplomas, path
+ * progress). Signed in → read the personal answer from /api/v1/… (never cached, and an expired token
+ * is refreshed); otherwise — or if the session has ended — the public, CDN-cached /api/… answer.
+ * (The same URL for both let a cached guest answer come back to a signed-in reader.)
+ */
+export async function personalGet<T>(v1Path: string, publicPath: string, config?: Parameters<typeof apiClient.get>[1]) {
+  const signedIn = typeof window !== "undefined" && !!localStorage.getItem("access_token");
+  if (signedIn) {
+    try {
+      return await apiClient.get<T>(v1Path, config);
+    } catch (e) {
+      if ((e as AxiosError)?.response?.status !== 401) throw e;
+    }
+  }
+  return apiClient.get<T>(publicPath, config);
+}

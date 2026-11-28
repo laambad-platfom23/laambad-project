@@ -38,6 +38,9 @@ export function MarketingSiteHeader(_props: Props = {}) {
                   <Link href="/courses" className={navLink}>
                     Courses
                   </Link>
+                  <Link href="/books" className={navLink}>
+                    Books
+                  </Link>
                   <Link href="/about" className={navLink}>
                     About
                   </Link>

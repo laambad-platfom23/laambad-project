@@ -4,11 +4,13 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, Check, Download, Loader2, Lock, Settings2, ShoppingCart, X } from "lucide-react";
+import { BookOpen, Check, Headphones, Settings2, ShoppingCart } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PaginationBar } from "@/components/ui/pagination-bar";
+import { BookCover, RatingLine, formatBookPrice } from "@/components/books/book-parts";
 import { booksApi, type Book } from "@/services/api/student-features";
 import { useAuthStore } from "@/store/auth-store";
 import { cartCheckoutHref, useCartStore } from "@/store/cart-store";
@@ -16,15 +18,13 @@ import { isAdminUser } from "@/lib/auth-routing";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
-function formatBookPrice(b: Pick<Book, "is_free" | "price" | "currency">) {
-  if (b.is_free) return "Free";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: b.currency || "USD" }).format(b.price / 100);
-}
+const PAGE = 12;
 
 /**
- * A2: book store + reader. PDFs are fetched with the sign-in token; their storage URL is never shown.
- * Paid books are bought like courses: "Buy now" opens the checkout (WaafiPay or manual EVC), or they
- * go into the cart first. ?book=<slug> points at one book, ?read=<slug> opens an owned book.
+ * Books in the dashboard: every book, and "My books" (bought or started) with the reading progress.
+ * A book opens its page (/books/<slug>); Read / Listen open the in-app reader (A12 — no download).
+ * Paid books are bought like courses: Buy now (checkout) or Add to cart.
+ * ?book=<slug> points at one book; ?read=<slug> (old links) opens the reader.
  */
 function BooksInner() {
   const user = useAuthStore((s) => s.user);
@@ -33,7 +33,7 @@ function BooksInner() {
   const pathname = usePathname();
   const params = useSearchParams();
   const [tab, setTab] = useState<"store" | "mine">("store");
-  const [reading, setReading] = useState<Book | null>(null);
+  const [page, setPage] = useState(1);
   const [focus, setFocus] = useState<string | null>(null);
   const cart = useCartStore((s) => s.items);
   const addToCart = useCartStore((s) => s.addItem);
@@ -45,9 +45,10 @@ function BooksInner() {
     enabled: !!user,
   });
   const list = (data ?? []).filter((b) => (admin ? b.status === "published" : true));
-  const shown = tab === "mine" ? list.filter((b) => b.owned && !b.is_free) : list;
+  const mine = (b: Book) => !!b.owned && (!b.is_free || !!b.progress);
+  const all = tab === "mine" ? list.filter(mine) : list;
+  const shown = all.slice((page - 1) * PAGE, page * PAGE);
 
-  // ?read=<slug> (after a purchase) opens the book; ?book=<slug> (from the cart / checkout) points at it
   useEffect(() => {
     if (!data) return;
     const read = params.get("read");
@@ -55,18 +56,20 @@ function BooksInner() {
     const key = `${read ?? ""}|${point ?? ""}`;
     if ((!read && !point) || handled.current === key) return;
     handled.current = key;
-    const slug = read ?? point!;
-    const b = data.find((x) => x.slug === slug);
-    router.replace(pathname, { scroll: false });
-    if (!b) return;
-    setTab("store");
-    if (read && b.owned) {
-      setReading(b);
+    if (read) {
+      router.replace(`/books/${encodeURIComponent(read)}/read`);
       return;
     }
+    router.replace(pathname, { scroll: false });
+    const idx = list.findIndex((x) => x.slug === point);
+    if (idx < 0) return;
+    setTab("store");
+    setPage(Math.floor(idx / PAGE) + 1);
+    const b = list[idx];
     setFocus(b.id);
-    setTimeout(() => document.getElementById(`book-${b.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
+    setTimeout(() => document.getElementById(`book-${b.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 120);
     setTimeout(() => setFocus(null), 3500);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, params, pathname, router]);
 
   const add = (b: Book) => {
@@ -83,7 +86,7 @@ function BooksInner() {
             <BookOpen className="h-7 w-7 text-primary" />
             Books
           </h1>
-          <p className="mt-1 text-muted-foreground">Read online or download. Free books open right away.</p>
+          <p className="mt-1 text-muted-foreground">Read and listen here and in the app. Books are not downloaded.</p>
         </div>
         {admin ? (
           <Button asChild variant="outline">
@@ -99,13 +102,16 @@ function BooksInner() {
           <button
             key={t}
             type="button"
-            onClick={() => setTab(t)}
+            onClick={() => {
+              setTab(t);
+              setPage(1);
+            }}
             className={cn(
               "rounded-md px-4 py-1.5 text-sm font-medium transition",
               tab === t ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
             )}
           >
-            {t === "store" ? "All books" : "My purchases"}
+            {t === "store" ? "All books" : "My books"}
           </button>
         ))}
       </div>
@@ -116,75 +122,95 @@ function BooksInner() {
             <Skeleton key={i} className="h-80 rounded-xl" />
           ))}
         </div>
-      ) : !shown.length ? (
+      ) : !all.length ? (
         <Card className="border-dashed">
           <CardContent className="py-14 text-center text-sm text-muted-foreground">
-            {tab === "mine" ? "You have not bought any books yet." : "No books published yet."}
+            {tab === "mine" ? "Books you buy or start reading appear here." : "No books published yet."}
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {shown.map((b) => {
-            const inCart = cart.some((l) => l.kind === "book" && l.id === b.id);
-            return (
-              <Card
-                key={b.id}
-                id={`book-${b.id}`}
-                className={cn("flex scroll-mt-24 flex-col overflow-hidden transition-shadow", focus === b.id && "ring-2 ring-brand ring-offset-2 ring-offset-background")}
-              >
-                <div className="flex aspect-[3/4] items-center justify-center overflow-hidden bg-muted">
-                  {b.cover_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={b.cover_url} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <BookOpen className="h-12 w-12 text-muted-foreground/40" />
-                  )}
-                </div>
-                <CardContent className="flex flex-1 flex-col gap-2 p-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="line-clamp-2 font-semibold leading-snug">{b.title}</p>
-                    <Badge variant={b.is_free ? "secondary" : "default"} className="shrink-0">
-                      {formatBookPrice(b)}
-                    </Badge>
-                  </div>
-                  {b.author ? <p className="text-xs text-muted-foreground">{b.author}</p> : null}
-                  {b.description ? <p className="line-clamp-3 text-sm text-muted-foreground">{b.description}</p> : null}
-                  <div className="mt-auto space-y-2 pt-2">
-                    {b.owned ? (
-                      <Button className="w-full" onClick={() => setReading(b)} disabled={!b.has_file}>
-                        <BookOpen className="h-4 w-4" /> Read
-                      </Button>
-                    ) : b.payment_pending ? (
-                      <Button className="w-full" variant="outline" disabled>
-                        Payment being verified
-                      </Button>
-                    ) : (
-                      <>
-                        <Button asChild className="w-full">
-                          <Link href={cartCheckoutHref({ kind: "book", slug: b.slug })}>Buy now</Link>
-                        </Button>
-                        {inCart ? (
-                          <Button asChild variant="outline" className="w-full">
-                            <Link href="/cart">
-                              <Check className="h-4 w-4 text-success" /> In cart
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {shown.map((b) => {
+              const inCart = cart.some((l) => l.kind === "book" && l.id === b.id);
+              const href = `/books/${encodeURIComponent(b.slug)}`;
+              return (
+                <Card
+                  key={b.id}
+                  id={`book-${b.id}`}
+                  className={cn("flex scroll-mt-24 flex-col overflow-hidden transition-shadow", focus === b.id && "ring-2 ring-brand ring-offset-2 ring-offset-background")}
+                >
+                  <Link href={href} className="relative block">
+                    <BookCover url={b.cover_url} className="aspect-[3/4] w-full" />
+                    {b.progress && b.progress.percent > 0 ? (
+                      <span className="absolute inset-x-0 bottom-0 h-1.5 bg-black/20" title={`${b.progress.percent}% read`}>
+                        <span className="block h-full bg-brand" style={{ width: `${b.progress.percent}%` }} />
+                      </span>
+                    ) : null}
+                  </Link>
+                  <CardContent className="flex flex-1 flex-col gap-2 p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <Link href={href} className="line-clamp-2 font-semibold leading-snug hover:text-brand">
+                        {b.title}
+                      </Link>
+                      <Badge variant={b.is_free ? "secondary" : "default"} className="shrink-0">
+                        {formatBookPrice(b)}
+                      </Badge>
+                    </div>
+                    {b.author ? <p className="text-xs text-muted-foreground">{b.author}</p> : null}
+                    <RatingLine rating={b.rating} size={13} className="text-xs" />
+                    {b.progress && b.progress.percent > 0 ? (
+                      <p className="text-xs text-muted-foreground">
+                        Page {b.progress.last_page} · {b.progress.percent}% read
+                      </p>
+                    ) : b.description ? (
+                      <p className="line-clamp-2 text-sm text-muted-foreground">{b.description}</p>
+                    ) : null}
+                    <div className="mt-auto space-y-2 pt-2">
+                      {b.owned ? (
+                        <div className="flex gap-2">
+                          <Button asChild className="flex-1" disabled={!b.has_file}>
+                            <Link href={`${href}/read`}>
+                              <BookOpen className="h-4 w-4" /> {b.progress && b.progress.last_page > 1 ? "Continue" : "Read"}
                             </Link>
                           </Button>
-                        ) : (
-                          <Button variant="outline" className="w-full" onClick={() => add(b)}>
-                            <ShoppingCart className="h-4 w-4" /> Add to cart
+                          <Button asChild variant="outline" size="icon" aria-label="Listen" title="Listen">
+                            <Link href={`${href}/read?listen=1`}>
+                              <Headphones className="h-4 w-4" />
+                            </Link>
                           </Button>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
+                        </div>
+                      ) : b.payment_pending ? (
+                        <Button className="w-full" variant="outline" disabled>
+                          Payment being verified
+                        </Button>
+                      ) : (
+                        <>
+                          <Button asChild className="w-full">
+                            <Link href={cartCheckoutHref({ kind: "book", slug: b.slug })}>Buy now</Link>
+                          </Button>
+                          {inCart ? (
+                            <Button asChild variant="outline" className="w-full">
+                              <Link href="/cart">
+                                <Check className="h-4 w-4 text-success" /> In cart
+                              </Link>
+                            </Button>
+                          ) : (
+                            <Button variant="outline" className="w-full" onClick={() => add(b)}>
+                              <ShoppingCart className="h-4 w-4" /> Add to cart
+                            </Button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+          <PaginationBar page={page} pageSize={PAGE} total={all.length} onPage={setPage} noun="books" />
+        </>
       )}
-
-      {reading ? <BookReader book={reading} onClose={() => setReading(null)} /> : null}
     </div>
   );
 }
@@ -194,74 +220,5 @@ export default function BooksPage() {
     <Suspense fallback={<Skeleton className="h-64 rounded-xl" />}>
       <BooksInner />
     </Suspense>
-  );
-}
-
-function BookReader({ book, onClose }: { book: Book; onClose: () => void }) {
-  const [url, setUrl] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let objectUrl: string | null = null;
-    let cancelled = false;
-    booksApi
-      .file(book.id)
-      .then((r) => {
-        if (cancelled) return;
-        objectUrl = URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
-        setUrl(objectUrl);
-      })
-      .catch(async (e) => {
-        // the error body is a Blob too (responseType: blob)
-        let msg = "Could not open the book.";
-        try {
-          const text = await e?.response?.data?.text?.();
-          const j = text ? JSON.parse(text) : null;
-          msg = j?.error?.message ?? j?.message ?? msg;
-        } catch {
-          /* keep default */
-        }
-        if (!cancelled) setError(msg);
-      });
-    return () => {
-      cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [book.id]);
-
-  const download = () => {
-    if (!url) return;
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${book.slug}.pdf`;
-    a.click();
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background">
-      <div className="flex items-center gap-2 border-b px-3 py-2">
-        <p className="min-w-0 flex-1 truncate font-semibold">{book.title}</p>
-        <Button size="sm" variant="outline" onClick={download} disabled={!url}>
-          <Download className="h-4 w-4" /> <span className="hidden sm:inline">Download</span>
-        </Button>
-        <Button size="icon" variant="ghost" onClick={onClose} aria-label="Close">
-          <X className="h-5 w-5" />
-        </Button>
-      </div>
-      <div className="min-h-0 flex-1">
-        {error ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
-            <Lock className="h-8 w-8 text-muted-foreground" />
-            <p className="font-medium">{error}</p>
-          </div>
-        ) : url ? (
-          <iframe title={book.title} src={url} className="h-full w-full border-0" />
-        ) : (
-          <div className="flex h-full items-center justify-center gap-2 text-muted-foreground">
-            <Loader2 className="h-5 w-5 animate-spin" /> Loading the book…
-          </div>
-        )}
-      </div>
-    </div>
   );
 }

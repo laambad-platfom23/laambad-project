@@ -1,5 +1,5 @@
 /** A2 student features: streak, retake, group discussion, learning paths, books, WhatsApp consent, passkeys. */
-import apiClient from "./client";
+import apiClient, { personalGet } from "./client";
 
 // ── Streak / retake ──
 export type Streak = {
@@ -119,8 +119,8 @@ export type LearningPathInput = {
 };
 
 export const learningPathsApi = {
-  list: () => apiClient.get<LearningPath[]>("/api/learning-paths"),
-  get: (slug: string) => apiClient.get<LearningPath>(`/api/learning-paths/${encodeURIComponent(slug)}`),
+  list: () => personalGet<LearningPath[]>("/api/v1/learning-paths", "/api/learning-paths"),
+  get: (slug: string) => personalGet<LearningPath>(`/api/v1/learning-paths/${encodeURIComponent(slug)}`, `/api/learning-paths/${encodeURIComponent(slug)}`),
   create: (data: LearningPathInput) => apiClient.post<LearningPath>("/api/v1/learning-paths", data),
   update: (id: string, data: LearningPathInput) => apiClient.patch<LearningPath>(`/api/v1/learning-paths/${id}`, data),
   remove: (id: string) => apiClient.delete(`/api/v1/learning-paths/${id}`),
@@ -144,7 +144,23 @@ export type Book = {
   owned?: boolean;
   payment_pending?: boolean;
   created_at: string;
+  /** A12 */
+  page_count?: number | null;
+  rating?: { average: number; count: number };
+  course?: { id: string; title: string; slug: string } | null;
+  progress?: { last_page: number; percent: number } | null;
+  course_id?: string | null;
 };
+export type BookProgress = { last_page: number; page_count: number | null; percent: number; bookmarks: number[]; updated_at: string | null };
+export type BookReviewList = {
+  average: number;
+  count: number;
+  distribution: { stars: number; count: number }[];
+  page: number;
+  has_more: boolean;
+  reviews: { id: string; rating: number; comment: string | null; user: { name: string; avatar_url: string | null }; created_at: string | null }[];
+};
+export type MyBookReview = { id: string; rating: number; comment: string | null; created_at: string; updated_at: string };
 export type BookInput = {
   title?: string;
   author?: string | null;
@@ -153,6 +169,9 @@ export type BookInput = {
   is_free?: boolean;
   price?: number;
   status?: "draft" | "published";
+  /** A12: related course, page count */
+  course_id?: string | null;
+  page_count?: number | null;
 };
 export type BookOrder = {
   id: string;
@@ -176,12 +195,19 @@ export type UploadTicket =
   | { mode: "blob"; pathname: string; token: string; max_bytes: number };
 
 export const booksApi = {
-  list: () => apiClient.get<Book[]>("/api/books"),
-  get: (slug: string) => apiClient.get<Book>(`/api/books/${encodeURIComponent(slug)}`),
+  list: () => personalGet<Book[]>("/api/v1/books", "/api/books"),
+  get: (slug: string) => personalGet<Book>(`/api/v1/books/${encodeURIComponent(slug)}`, `/api/books/${encodeURIComponent(slug)}`),
   mine: () => apiClient.get<Book[]>("/api/v1/my-books"),
   /** the PDF as a Blob (the request carries the sign-in token; the storage URL is never exposed) */
-  file: (id: string) =>
-    apiClient.get<Blob>(`/api/v1/books/${id}/file`, { responseType: "blob", timeout: 300_000 }),
+  /** A12: the PDF address for the in-app reader (pdf.js loads it in parts with the sign-in token) */
+  fileUrl: (id: string) => `/api/v1/books/${id}/file`,
+  progress: (id: string) => apiClient.get<BookProgress>(`/api/v1/books/${id}/progress`),
+  saveProgress: (id: string, data: { last_page?: number; page_count?: number; bookmarks?: number[] }) =>
+    apiClient.put<BookProgress>(`/api/v1/books/${id}/progress`, data),
+  reviews: (id: string, page = 1) => apiClient.get<BookReviewList>(`/api/books/${id}/reviews`, { params: { page } }),
+  myReview: (id: string) => apiClient.get<{ can_review: boolean; mine: MyBookReview | null }>(`/api/v1/books/${id}/reviews/mine`),
+  saveReview: (id: string, data: { rating: number; comment: string }) => apiClient.post<MyBookReview>(`/api/v1/books/${id}/reviews`, data),
+  deleteReview: (reviewId: string) => apiClient.delete(`/api/v1/book-reviews/${reviewId}`),
   payWaafi: (id: string, phone: string, couponCode?: string) =>
     apiClient.post<{ outcome: "approved" | "declined" | "unknown"; message: string; status: string }>(
       `/api/v1/books/${id}/pay/waafi`,

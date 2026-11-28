@@ -129,8 +129,8 @@ export function BookCheckout({ slug }: { slug: string }) {
     onError: (err: unknown) => toast.error(getApiErrorMessage(err, "Could not apply the coupon")),
   });
 
-  const backHref = `/dashboard/books?book=${encodeURIComponent(slug)}`;
-  const readHref = `/dashboard/books?read=${encodeURIComponent(slug)}`;
+  const backHref = `/books/${encodeURIComponent(slug)}`;
+  const readHref = `/books/${encodeURIComponent(slug)}/read`;
   const nextHere = encodeURIComponent(`/checkout?book=${encodeURIComponent(slug)}`);
 
   if (isLoading || restoring) {
@@ -144,11 +144,11 @@ export function BookCheckout({ slug }: { slug: string }) {
 
   if (isError || !book) {
     return (
-      <Centered backHref="/dashboard/books">
+      <Centered backHref="/books">
         <BookOpen className="mx-auto h-12 w-12 text-muted-foreground" aria-hidden />
         <p className="mt-3 font-semibold">This book is not available.</p>
         <Button asChild variant="outline" className="mt-6">
-          <Link href="/dashboard/books">Browse books</Link>
+          <Link href="/books">Browse books</Link>
         </Button>
       </Centered>
     );
