@@ -1,21 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Download, Loader2, Lock, Settings2, ShoppingCart, X } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
+import { BookOpen, Check, Download, Loader2, Lock, Settings2, ShoppingCart, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { booksApi, type Book } from "@/services/api/student-features";
 import { useAuthStore } from "@/store/auth-store";
+import { cartCheckoutHref, useCartStore } from "@/store/cart-store";
 import { isAdminUser } from "@/lib/auth-routing";
-import { SODEMY_CONTACT } from "@/lib/sodemy-contact";
-import { cn, getApiErrorMessage } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 function formatBookPrice(b: Pick<Book, "is_free" | "price" | "currency">) {
@@ -23,13 +21,23 @@ function formatBookPrice(b: Pick<Book, "is_free" | "price" | "currency">) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: b.currency || "USD" }).format(b.price / 100);
 }
 
-/** A2: book store + reader. PDFs are fetched with the sign-in token; their storage URL is never shown. */
-export default function BooksPage() {
+/**
+ * A2: book store + reader. PDFs are fetched with the sign-in token; their storage URL is never shown.
+ * Paid books are bought like courses: "Buy now" opens the checkout (WaafiPay or manual EVC), or they
+ * go into the cart first. ?book=<slug> points at one book, ?read=<slug> opens an owned book.
+ */
+function BooksInner() {
   const user = useAuthStore((s) => s.user);
   const admin = isAdminUser(user);
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
   const [tab, setTab] = useState<"store" | "mine">("store");
   const [reading, setReading] = useState<Book | null>(null);
-  const [buying, setBuying] = useState<Book | null>(null);
+  const [focus, setFocus] = useState<string | null>(null);
+  const cart = useCartStore((s) => s.items);
+  const addToCart = useCartStore((s) => s.addItem);
+  const handled = useRef<string | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["books", user?.id],
@@ -38,6 +46,34 @@ export default function BooksPage() {
   });
   const list = (data ?? []).filter((b) => (admin ? b.status === "published" : true));
   const shown = tab === "mine" ? list.filter((b) => b.owned && !b.is_free) : list;
+
+  // ?read=<slug> (after a purchase) opens the book; ?book=<slug> (from the cart / checkout) points at it
+  useEffect(() => {
+    if (!data) return;
+    const read = params.get("read");
+    const point = params.get("book");
+    const key = `${read ?? ""}|${point ?? ""}`;
+    if ((!read && !point) || handled.current === key) return;
+    handled.current = key;
+    const slug = read ?? point!;
+    const b = data.find((x) => x.slug === slug);
+    router.replace(pathname, { scroll: false });
+    if (!b) return;
+    setTab("store");
+    if (read && b.owned) {
+      setReading(b);
+      return;
+    }
+    setFocus(b.id);
+    setTimeout(() => document.getElementById(`book-${b.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
+    setTimeout(() => setFocus(null), 3500);
+  }, [data, params, pathname, router]);
+
+  const add = (b: Book) => {
+    const added = addToCart({ kind: "book", id: b.id, slug: b.slug, title: b.title, priceMinor: b.price, currency: b.currency || "USD", isFree: false });
+    if (added) toast.success("Added to cart", { action: { label: "View cart", onClick: () => router.push("/cart") } });
+    else toast.message("This book is already in your cart");
+  };
 
   return (
     <div className="space-y-6">
@@ -88,49 +124,76 @@ export default function BooksPage() {
         </Card>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {shown.map((b) => (
-            <Card key={b.id} className="flex flex-col overflow-hidden">
-              <div className="flex aspect-[3/4] items-center justify-center overflow-hidden bg-muted">
-                {b.cover_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={b.cover_url} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  <BookOpen className="h-12 w-12 text-muted-foreground/40" />
-                )}
-              </div>
-              <CardContent className="flex flex-1 flex-col gap-2 p-4">
-                <div className="flex items-start justify-between gap-2">
-                  <p className="line-clamp-2 font-semibold leading-snug">{b.title}</p>
-                  <Badge variant={b.is_free ? "secondary" : "default"} className="shrink-0">
-                    {formatBookPrice(b)}
-                  </Badge>
-                </div>
-                {b.author ? <p className="text-xs text-muted-foreground">{b.author}</p> : null}
-                {b.description ? <p className="line-clamp-3 text-sm text-muted-foreground">{b.description}</p> : null}
-                <div className="mt-auto pt-2">
-                  {b.owned ? (
-                    <Button className="w-full" onClick={() => setReading(b)} disabled={!b.has_file}>
-                      <BookOpen className="h-4 w-4" /> Read
-                    </Button>
-                  ) : b.payment_pending ? (
-                    <Button className="w-full" variant="outline" disabled>
-                      Payment being verified
-                    </Button>
+          {shown.map((b) => {
+            const inCart = cart.some((l) => l.kind === "book" && l.id === b.id);
+            return (
+              <Card
+                key={b.id}
+                id={`book-${b.id}`}
+                className={cn("flex scroll-mt-24 flex-col overflow-hidden transition-shadow", focus === b.id && "ring-2 ring-brand ring-offset-2 ring-offset-background")}
+              >
+                <div className="flex aspect-[3/4] items-center justify-center overflow-hidden bg-muted">
+                  {b.cover_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={b.cover_url} alt="" className="h-full w-full object-cover" />
                   ) : (
-                    <Button className="w-full" onClick={() => setBuying(b)}>
-                      <ShoppingCart className="h-4 w-4" /> Buy
-                    </Button>
+                    <BookOpen className="h-12 w-12 text-muted-foreground/40" />
                   )}
                 </div>
-              </CardContent>
-            </Card>
-          ))}
+                <CardContent className="flex flex-1 flex-col gap-2 p-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="line-clamp-2 font-semibold leading-snug">{b.title}</p>
+                    <Badge variant={b.is_free ? "secondary" : "default"} className="shrink-0">
+                      {formatBookPrice(b)}
+                    </Badge>
+                  </div>
+                  {b.author ? <p className="text-xs text-muted-foreground">{b.author}</p> : null}
+                  {b.description ? <p className="line-clamp-3 text-sm text-muted-foreground">{b.description}</p> : null}
+                  <div className="mt-auto space-y-2 pt-2">
+                    {b.owned ? (
+                      <Button className="w-full" onClick={() => setReading(b)} disabled={!b.has_file}>
+                        <BookOpen className="h-4 w-4" /> Read
+                      </Button>
+                    ) : b.payment_pending ? (
+                      <Button className="w-full" variant="outline" disabled>
+                        Payment being verified
+                      </Button>
+                    ) : (
+                      <>
+                        <Button asChild className="w-full">
+                          <Link href={cartCheckoutHref({ kind: "book", slug: b.slug })}>Buy now</Link>
+                        </Button>
+                        {inCart ? (
+                          <Button asChild variant="outline" className="w-full">
+                            <Link href="/cart">
+                              <Check className="h-4 w-4 text-success" /> In cart
+                            </Link>
+                          </Button>
+                        ) : (
+                          <Button variant="outline" className="w-full" onClick={() => add(b)}>
+                            <ShoppingCart className="h-4 w-4" /> Add to cart
+                          </Button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
 
       {reading ? <BookReader book={reading} onClose={() => setReading(null)} /> : null}
-      {buying ? <BuyBookDialog book={buying} onClose={() => setBuying(null)} /> : null}
     </div>
+  );
+}
+
+export default function BooksPage() {
+  return (
+    <Suspense fallback={<Skeleton className="h-64 rounded-xl" />}>
+      <BooksInner />
+    </Suspense>
   );
 }
 
@@ -200,121 +263,5 @@ function BookReader({ book, onClose }: { book: Book; onClose: () => void }) {
         )}
       </div>
     </div>
-  );
-}
-
-function BuyBookDialog({ book, onClose }: { book: Book; onClose: () => void }) {
-  const qc = useQueryClient();
-  const [method, setMethod] = useState<"waafi" | "manual">("waafi");
-  const [phone, setPhone] = useState("");
-  const [reference, setReference] = useState("");
-  const [done, setDone] = useState<string | null>(null);
-
-  const pay = useMutation({
-    mutationFn: async () => {
-      if (method === "waafi") return (await booksApi.payWaafi(book.id, phone)).data;
-      await booksApi.payManual(book.id, phone, reference || undefined);
-      return { outcome: "manual" as const, message: "" };
-    },
-    onSuccess: (r) => {
-      qc.invalidateQueries({ queryKey: ["books"] });
-      if (r.outcome === "approved") {
-        toast.success("Payment received — your book is ready!");
-        onClose();
-      } else if (r.outcome === "declined") {
-        toast.error(r.message || "The payment was declined.");
-      } else if (r.outcome === "manual") {
-        setDone("manual");
-      } else {
-        toast.message(r.message);
-        onClose();
-      }
-    },
-    onError: (e) => toast.error(getApiErrorMessage(e, "Payment failed")),
-  });
-
-  const price = formatBookPrice(book);
-  const waNumber = SODEMY_CONTACT.whatsappUrl.replace(/\D/g, "");
-  const waText = [
-    "Asc, waxaan iibsaday buug Laambad (Manual payment / EVC Plus).",
-    `Buugga: ${book.title}`,
-    `Lacagta: ${price}`,
-    phone ? `Lambarka aan ka diray: ${phone}` : "",
-    reference ? `Transaction ID: ${reference}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Buy “{book.title}”</DialogTitle>
-          <DialogDescription>Price: {price}</DialogDescription>
-        </DialogHeader>
-        {done === "manual" ? (
-          <div className="space-y-3 text-center">
-            <p className="text-sm">Request submitted. We open the book after checking your transfer.</p>
-            <Button asChild className="w-full">
-              <a href={`https://wa.me/${waNumber}?text=${encodeURIComponent(waText)}`} target="_blank" rel="noopener noreferrer">
-                Send confirmation on WhatsApp
-              </a>
-            </Button>
-            <Button variant="outline" className="w-full" onClick={onClose}>
-              Close
-            </Button>
-          </div>
-        ) : (
-          <form
-            className="space-y-4"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!pay.isPending) pay.mutate();
-            }}
-          >
-            <div className="grid grid-cols-2 gap-2">
-              {(["waafi", "manual"] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setMethod(m)}
-                  className={cn(
-                    "rounded-lg border px-3 py-2 text-left text-sm",
-                    method === m ? "border-brand bg-brand-soft font-semibold" : "hover:bg-muted/60"
-                  )}
-                >
-                  {m === "waafi" ? "Pay now (PIN)" : "Manual EVC"}
-                  <span className="block text-[11px] font-normal text-muted-foreground">
-                    {m === "waafi" ? "EVC · Zaad · Sahal · eDahab" : "Send, then an admin approves"}
-                  </span>
-                </button>
-              ))}
-            </div>
-            {method === "manual" ? (
-              <p className="text-sm text-muted-foreground">
-                Send <strong className="text-foreground">{price}</strong> with EVC Plus to{" "}
-                <strong className="font-mono text-foreground">+252 61 9993660</strong>, then submit this form.
-              </p>
-            ) : (
-              <p className="text-sm text-muted-foreground">You will get a prompt on your phone — confirm it with your PIN.</p>
-            )}
-            <div className="space-y-1.5">
-              <Label htmlFor="book-phone">{method === "waafi" ? "Mobile number to pay with" : "Number you paid from"}</Label>
-              <Input id="book-phone" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="61 234 5678" inputMode="tel" />
-            </div>
-            {method === "manual" ? (
-              <div className="space-y-1.5">
-                <Label htmlFor="book-ref">Transaction ID (optional)</Label>
-                <Input id="book-ref" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="From the EVC SMS" />
-              </div>
-            ) : null}
-            <Button type="submit" className="w-full" disabled={!phone.trim() || pay.isPending}>
-              {pay.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {pay.isPending && method === "waafi" ? "Waiting for your PIN…" : method === "waafi" ? `Pay ${price}` : "Submit request"}
-            </Button>
-          </form>
-        )}
-      </DialogContent>
-    </Dialog>
   );
 }

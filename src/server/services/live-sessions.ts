@@ -9,6 +9,7 @@ import type { AuthUser } from "@/lib/auth/request";
 import { findBestEnrollment, hasCourseAccess } from "@/server/enrollment-status";
 import { assertUuid, isUuid } from "@/lib/uuid";
 import { decodeHtmlEntities } from "@/lib/html-entities";
+import { normalizeMeetUrl } from "@/lib/meet-url";
 import * as google from "@/server/google";
 
 async function courseOf(courseId: string) {
@@ -108,9 +109,10 @@ function clean(input: Input, partial: boolean) {
     out.durationMin = m;
   }
   if (input.meet_url !== undefined) {
-    const u = String(input.meet_url ?? "").trim();
-    if (u && !/^https:\/\/meet\.google\.com\/[a-z0-9-]+$/i.test(u)) throw Err.invalidInput("paste a Google Meet link (https://meet.google.com/…)");
-    out.meetUrl = u || null;
+    const raw = String(input.meet_url ?? "").trim();
+    const u = normalizeMeetUrl(raw);
+    if (raw && !u) throw Err.invalidInput("paste a Google Meet link (https://meet.google.com/…)");
+    out.meetUrl = u;
   }
   return out;
 }
@@ -232,6 +234,11 @@ export async function googleCallback(code: string, state: string) {
   const userId = google.readState(state);
   if (!userId || !isUuid(userId)) throw new ApiError(400, "google_state", "This Google sign-in link expired. Please try again.");
   const r = await google.exchangeCode(code);
+  if (!google.grantsCalendar(r.scope)) {
+    // signed in but the Calendar box was left unticked: nothing could be scheduled with this token
+    await google.revokeToken(r.refreshToken);
+    throw new ApiError(400, "google_no_calendar", "Google Calendar was not allowed. Connect again and tick the Google Calendar box.");
+  }
   const t = now();
   await prisma.googleConnection.upsert({
     where: { userId },

@@ -11,7 +11,13 @@ import { createCipheriv, createDecipheriv, createHmac, randomBytes, timingSafeEq
 import { ApiError } from "@/lib/api/errors";
 import { siteUrl } from "@/server/notify";
 
-const SCOPES = ["openid", "email", "https://www.googleapis.com/auth/calendar.events"];
+const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+const SCOPES = ["openid", "email", CALENDAR_SCOPE];
+
+/** Google's consent screen lets people untick Calendar: without it no Meet link can be created. */
+export function grantsCalendar(scope: string | null | undefined) {
+  return !scope || scope.split(/\s+/).includes(CALENDAR_SCOPE);
+}
 
 export function isGoogleConfigured() {
   return !!(process.env.GOOGLE_CLIENT_ID?.trim() && process.env.GOOGLE_CLIENT_SECRET?.trim() && process.env.GOOGLE_TOKEN_KEY?.trim());
@@ -114,12 +120,22 @@ export async function accessToken(refreshTokenEnc: string) {
   return t.access_token;
 }
 
-export async function revoke(refreshTokenEnc: string) {
+export async function revokeToken(token: string) {
   try {
-    await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(decrypt(refreshTokenEnc))}`, { method: "POST" });
+    await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(token)}`, { method: "POST" });
   } catch {
     /* best effort */
   }
+}
+
+export async function revoke(refreshTokenEnc: string) {
+  let token: string;
+  try {
+    token = decrypt(refreshTokenEnc);
+  } catch {
+    return;
+  }
+  await revokeToken(token);
 }
 
 type EventInput = { title: string; description?: string | null; startsAt: Date; durationMin: number };

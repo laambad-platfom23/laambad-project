@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarPlus, CheckCircle2, Loader2, Video } from "lucide-react";
+import { CalendarPlus, CheckCircle2, ExternalLink, Info, Loader2, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,7 @@ import { SessionRow } from "@/components/learning/session-row";
 import { useAuthStore } from "@/store/auth-store";
 import { isStaffUser } from "@/lib/auth-routing";
 import { getApiErrorMessage } from "@/lib/utils";
+import { normalizeMeetUrl } from "@/lib/meet-url";
 import { toast } from "sonner";
 
 /** A5: live classes on Google Meet. Instructors connect Google and schedule; students join. */
@@ -29,6 +30,7 @@ function LiveSessionsInner() {
     const g = params.get("google");
     if (g === "connected") toast.success("Google account connected");
     if (g === "failed") toast.error("Google connection failed — please try again");
+    if (g === "no_calendar") toast.error("Google Calendar was not allowed — connect again and tick the Google Calendar box.", { duration: 10_000 });
   }, [params]);
 
   const mine = useQuery({ queryKey: ["live-mine"], queryFn: () => liveApi.mine().then((r) => r.data), enabled: !!user });
@@ -96,6 +98,11 @@ function InstructorTools() {
     mutationFn: () => liveApi.googleDisconnect(),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["google-status"] }),
   });
+  const g = status.data;
+  // without a Google connection the instructor pastes a Meet link (any usual form is accepted)
+  const meetUrl = normalizeMeetUrl(manualUrl);
+  const badLink = !!manualUrl.trim() && !meetUrl;
+  const needsLink = !g?.connected;
   const create = useMutation({
     mutationFn: () =>
       liveApi.create(courseId, {
@@ -103,7 +110,7 @@ function InstructorTools() {
         description: description || undefined,
         starts_at: new Date(start).toISOString(),
         duration_min: Number(duration),
-        meet_url: manualUrl || undefined,
+        meet_url: needsLink && meetUrl ? meetUrl : undefined,
       }),
     onSuccess: () => {
       toast.success("Session scheduled — students of the course were told");
@@ -115,34 +122,45 @@ function InstructorTools() {
     },
     onError: (e) => toast.error(getApiErrorMessage(e, "Could not schedule the session")),
   });
-  const g = status.data;
 
   return (
     <Card>
       <CardContent className="space-y-4 p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3">
-          <div>
-            <p className="text-sm font-semibold">Google account</p>
-            <p className="text-xs text-muted-foreground">
-              {!g
-                ? "…"
-                : !g.configured
-                  ? "Google Meet is not set up on the server yet — paste a Meet link below for now."
-                  : g.connected
-                    ? `Connected as ${g.email ?? "your Google account"} — Meet links are created automatically.`
-                    : "Connect once: the Meet link is created in your Google Calendar for every session."}
-            </p>
+        <div className="space-y-3 rounded-xl border px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold">Google account</p>
+              <p className="text-xs text-muted-foreground">
+                {!g
+                  ? "…"
+                  : !g.configured
+                    ? "Google Meet is not set up on the server yet — paste a Meet link below for now."
+                    : g.connected
+                      ? `Connected as ${g.email ?? "your Google account"} — Meet links are created automatically.`
+                      : "Connect once: the Meet link is created in your Google Calendar for every session. Or paste a Meet link below."}
+              </p>
+            </div>
+            {g?.configured ? (
+              g.connected ? (
+                <Button size="sm" variant="outline" onClick={() => disconnect.mutate()}>
+                  <CheckCircle2 className="h-4 w-4 text-success" /> Disconnect
+                </Button>
+              ) : (
+                <Button size="sm" onClick={() => connect.mutate()} disabled={connect.isPending}>
+                  {connect.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Connect Google
+                </Button>
+              )
+            ) : null}
           </div>
-          {g?.configured ? (
-            g.connected ? (
-              <Button size="sm" variant="outline" onClick={() => disconnect.mutate()}>
-                <CheckCircle2 className="h-4 w-4 text-success" /> Disconnect
-              </Button>
-            ) : (
-              <Button size="sm" onClick={() => connect.mutate()} disabled={connect.isPending}>
-                {connect.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Connect Google
-              </Button>
-            )
+          {g?.configured && !g.connected ? (
+            <div className="flex gap-2.5 rounded-lg bg-amber-500/10 px-3 py-2.5 text-xs leading-relaxed text-foreground/85">
+              <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+              <p>
+                Google may show <strong>“Google hasn&apos;t verified this app”</strong>. This is Laambad&apos;s own Google sign-in: click{" "}
+                <strong>Advanced</strong> → <strong>Go to … (unsafe)</strong>, tick the <strong>Google Calendar</strong> box, then press{" "}
+                <strong>Continue</strong>.
+              </p>
+            </div>
           ) : null}
         </div>
         <form
@@ -179,16 +197,43 @@ function InstructorTools() {
             <Label>Description (optional)</Label>
             <Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
           </div>
-          {!g?.connected ? (
+          {needsLink ? (
             <div className="space-y-1.5 sm:col-span-2">
-              <Label>Google Meet link</Label>
-              <Input value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} placeholder="https://meet.google.com/abc-defg-hij" />
+              <Label htmlFor="meet-url">Google Meet link</Label>
+              <Input
+                id="meet-url"
+                value={manualUrl}
+                onChange={(e) => setManualUrl(e.target.value)}
+                placeholder="https://meet.google.com/abc-defg-hij"
+                aria-invalid={badLink}
+                className={badLink ? "border-destructive focus-visible:ring-destructive" : undefined}
+              />
+              {badLink ? (
+                <p className="text-xs text-destructive">This is not a Google Meet link. It looks like https://meet.google.com/abc-defg-hij</p>
+              ) : (
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Open Google Meet → <strong>New meeting</strong> → <strong>Create a meeting for later</strong>, copy the link and paste it here.{" "}
+                  <a
+                    href="https://meet.google.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 font-medium text-brand hover:underline"
+                  >
+                    Open Google Meet <ExternalLink className="h-3 w-3" aria-hidden />
+                  </a>
+                </p>
+              )}
             </div>
           ) : null}
-          <div className="sm:col-span-2">
-            <Button type="submit" disabled={!courseId || !title.trim() || !start || create.isPending}>
+          <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
+            <Button type="submit" disabled={!courseId || !title.trim() || !start || create.isPending || (needsLink && !meetUrl)}>
               {create.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarPlus className="h-4 w-4" />} Schedule session
             </Button>
+            {needsLink && !meetUrl && g ? (
+              <span className="text-xs text-muted-foreground">
+                {g.configured ? "Connect Google or paste a Meet link to schedule." : "Paste a Meet link to schedule."}
+              </span>
+            ) : null}
           </div>
         </form>
       </CardContent>

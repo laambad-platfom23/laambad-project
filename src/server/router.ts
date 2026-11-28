@@ -213,7 +213,7 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
         await liveSessions.googleCallback(code, state);
       } catch (e) {
         console.error("[google] connect failed:", (e as Error)?.message);
-        result = "failed";
+        result = e instanceof ApiError && e.code === "google_no_calendar" ? "no_calendar" : "failed";
       }
       return Response.redirect(new URL(`/dashboard/live-sessions?google=${result}`, req.url), 302);
     }

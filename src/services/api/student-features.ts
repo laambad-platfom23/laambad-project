@@ -189,7 +189,7 @@ export const booksApi = {
       { timeout: 160_000 }
     ),
   payManual: (id: string, senderPhone: string, reference?: string) =>
-    apiClient.post(`/api/v1/books/${id}/pay/manual`, { sender_phone: senderPhone, reference }),
+    apiClient.post<{ id: string; status: string }>(`/api/v1/books/${id}/pay/manual`, { sender_phone: senderPhone, reference }),
   // admin
   create: (data: BookInput) => apiClient.post<Book>("/api/v1/admin/books", data),
   update: (id: string, data: BookInput) => apiClient.patch<Book>(`/api/v1/admin/books/${id}`, data),

@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { useCartStore } from "@/store/cart-store";
-import { CartPanelBody } from "@/components/cart/cart-panel-body";
+import { CartPanelBody, cartCountLabel } from "@/components/cart/cart-panel-body";
 import { cn } from "@/lib/utils";
 
 export function ShoppingCartSheet({
@@ -25,7 +25,8 @@ export function ShoppingCartSheet({
   variant?: "default" | "gold";
 }) {
   const [open, setOpen] = useState(false);
-  const count = useCartStore((s) => s.items.length);
+  const items = useCartStore((s) => s.items);
+  const count = items.length;
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -58,13 +59,9 @@ export function ShoppingCartSheet({
         <SheetHeader className="shrink-0 space-y-1 border-b border-border/60 px-6 py-4 text-left">
           <SheetTitle className="text-lg">Shopping cart</SheetTitle>
           <SheetDescription className="sr-only">
-            Review courses in your cart, remove items, or go to the full cart page.
+            Review the courses and books in your cart, remove items, or go to the full cart page.
           </SheetDescription>
-          {count > 0 ? (
-            <p className="text-sm font-normal text-muted-foreground">
-              {count} course{count === 1 ? "" : "s"}
-            </p>
-          ) : null}
+          {mounted && count > 0 ? <p className="text-sm font-normal text-muted-foreground">{cartCountLabel(items)}</p> : null}
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto px-6">
           <CartPanelBody variant="drawer" onNavigate={() => setOpen(false)} />

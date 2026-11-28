@@ -4,21 +4,10 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  CheckCircle2,
-  ChevronLeft,
-  Clock,
-  Loader2,
-  Lock,
-  ShieldCheck,
-  Smartphone,
-  Wallet,
-  XCircle,
-} from "lucide-react";
+import { ChevronLeft, Loader2, Lock, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { coursesApi, type CouponPreviewResponse } from "@/services/api/courses";
 import { paymentsApi, type InitiatePaymentBody, type WaafiPayResult } from "@/services/api/payments";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { enrollmentsApi } from "@/services/api/enrollments";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,148 +20,24 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Logo } from "@/components/ui/logo";
 import type { Course } from "@/types";
 import { getApiErrorMessage } from "@/lib/utils";
-import { useAuthStore } from "@/store/auth-store";
+import { useCartStore } from "@/store/cart-store";
 import { courseCoverRawUrl, publicCourseCoverImageUrlFromRaw } from "@/lib/course-cover";
-import { cn } from "@/lib/utils";
-import { SODEMY_CONTACT } from "@/lib/sodemy-contact";
-
-function formatMinor(amount: number, currency: string) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currency.toUpperCase() || "USD",
-  }).format(amount / 100);
-}
-
-/** Somali mobile: 9 digits (61/77 EVC, 62/65 eDahab, 63 Zaad, 90 Sahal …); optional +252 / 0 prefix. Same rule as the server. */
-function isValidSomaliMobile(raw: string): boolean {
-  let d = raw.replace(/\D/g, "");
-  if (d.startsWith("00252")) d = d.slice(5);
-  else if (d.startsWith("252")) d = d.slice(3);
-  if (d.startsWith("0")) d = d.slice(1);
-  return /^(6[1-9]|7[0-9]|9[0-9])\d{7}$/.test(d);
-}
-
-function MethodButton({
-  active,
-  onClick,
-  icon,
-  title,
-  subtitle,
-  badge,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  title: string;
-  subtitle: React.ReactNode;
-  badge?: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className="flex w-full items-start gap-3 px-3 py-3 text-left transition-colors sm:px-4"
-    >
-      <span
-        className={cn(
-          "mt-0.5 flex h-4 w-4 shrink-0 rounded-full border-2",
-          active ? "border-[#E84A27] bg-[#E84A27] dark:border-[#FF6B45] dark:bg-[#FF6B45]" : "border-muted-foreground/40"
-        )}
-      >
-        {active ? <span className="m-auto block h-1.5 w-1.5 rounded-full bg-white" /> : null}
-      </span>
-      {icon}
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-2 font-medium text-foreground">
-          {title}
-          {badge ? (
-            <span className="rounded-full bg-[#E84A27]/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#E84A27] dark:bg-[#FF6B45]/15 dark:text-[#FF8A66]">
-              {badge}
-            </span>
-          ) : null}
-        </span>
-        <span className="mt-0.5 block text-[12.5px] text-muted-foreground">{subtitle}</span>
-      </span>
-    </button>
-  );
-}
-
-type WaafiDialogState =
-  | { phase: "waiting"; phone: string; amount: string }
-  | { phase: "done"; result: WaafiPayResult }
-  | { phase: "error"; message: string }
-  | null;
-
-function WaafiDialog({
-  state,
-  onClose,
-  onOpenCourse,
-}: {
-  state: WaafiDialogState;
-  onClose: () => void;
-  onOpenCourse: (slug: string) => void;
-}) {
-  const waiting = state?.phase === "waiting";
-  const result = state?.phase === "done" ? state.result : null;
-  return (
-    <Dialog open={!!state} onOpenChange={(o) => !o && !waiting && onClose()}>
-      <DialogContent
-        className="max-w-sm text-center [&>button]:hidden"
-        onInteractOutside={(e) => waiting && e.preventDefault()}
-        onEscapeKeyDown={(e) => waiting && e.preventDefault()}
-      >
-        {waiting && state?.phase === "waiting" ? (
-          <>
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-brand/10">
-              <Smartphone className="h-8 w-8 animate-pulse text-brand" />
-            </div>
-            <DialogTitle className="text-lg">Check your phone</DialogTitle>
-            <DialogDescription className="text-[14px] leading-relaxed">
-              A payment request of <strong className="text-foreground">{state.amount}</strong> was sent to{" "}
-              <strong className="font-mono text-foreground">{state.phone}</strong>. Enter your PIN to confirm.
-            </DialogDescription>
-            <p className="flex items-center justify-center gap-2 text-[12.5px] text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Waiting for confirmation… do not close this page.
-            </p>
-          </>
-        ) : result?.outcome === "approved" ? (
-          <>
-            <CheckCircle2 className="mx-auto h-14 w-14 text-success" />
-            <DialogTitle className="text-lg">Payment successful</DialogTitle>
-            <DialogDescription>{result.message}</DialogDescription>
-            <Button className="mt-2 w-full bg-brand-navy text-white hover:bg-brand-navy/90" onClick={() => onOpenCourse(result.course_slug)}>
-              Start learning
-            </Button>
-          </>
-        ) : result?.outcome === "unknown" ? (
-          <>
-            <Clock className="mx-auto h-14 w-14 text-warning" />
-            <DialogTitle className="text-lg">Payment not confirmed yet</DialogTitle>
-            <DialogDescription>{result.message}</DialogDescription>
-            <Button variant="outline" className="mt-2 w-full" onClick={onClose}>
-              Close
-            </Button>
-          </>
-        ) : (
-          <>
-            <XCircle className="mx-auto h-14 w-14 text-destructive" />
-            <DialogTitle className="text-lg">Payment not completed</DialogTitle>
-            <DialogDescription>
-              {result?.message ?? (state?.phase === "error" ? state.message : "Please try again.")}
-            </DialogDescription>
-            <Button variant="outline" className="mt-2 w-full" onClick={onClose}>
-              Try again
-            </Button>
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
+import { BookCheckout } from "@/components/checkout/book-checkout";
+import {
+  CheckoutHeader,
+  CheckoutSkeleton,
+  ManualOrderDialog,
+  PaymentMethodSection,
+  WaafiDialog,
+  formatMinor,
+  isValidSomaliMobile,
+  useCheckoutUser,
+  usePaymentForm,
+  type ManualOrder,
+  type WaafiDialogState,
+} from "@/components/checkout/checkout-parts";
 
 function CheckoutCoverThumb({ course }: { course: Course }) {
   const raw = courseCoverRawUrl(course);
@@ -189,36 +54,19 @@ function CheckoutCoverThumb({ course }: { course: Course }) {
   );
 }
 
-function CheckoutSkeleton() {
-  return (
-    <div className="mx-auto flex min-h-[calc(100svh-3.5rem)] max-w-6xl flex-col px-4 py-6 sm:px-6">
-      <Skeleton className="mb-4 h-8 w-40" />
-      <div className="grid flex-1 grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-8 lg:items-start">
-        <div className="space-y-4">
-          <Skeleton className="h-48 w-full rounded-2xl" />
-          <Skeleton className="h-56 w-full rounded-2xl" />
-        </div>
-        <Skeleton className="min-h-[280px] w-full rounded-2xl lg:sticky lg:top-[4.75rem]" />
-      </div>
-    </div>
-  );
-}
-
 function CheckoutInner() {
   const searchParams = useSearchParams();
   const courseId = searchParams.get("courseId")?.trim() ?? "";
   const slug = searchParams.get("slug")?.trim() ?? "";
   const router = useRouter();
   const queryClient = useQueryClient();
-  const authed = !!useAuthStore((s) => s.user);
+  const { authed, restoring } = useCheckoutUser();
   const hasKey = !!slug || !!courseId;
   const [country, setCountry] = useState("SO");
-  const [payMethod, setPayMethod] = useState<"offline" | "wafi">("wafi");
-  const [wafiPhone, setWafiPhone] = useState("");
-  const [wafiPhoneTouched, setWafiPhoneTouched] = useState(false);
-  const [senderPhone, setSenderPhone] = useState("");
-  const [payRef, setPayRef] = useState("");
-  const [waafiDialog, setWaafiDialog] = useState<WaafiDialogState>(null);
+  const pay = usePaymentForm();
+  const { method: payMethod, wafiPhone, senderPhone, payRef } = pay;
+  const removeFromCart = useCartStore((s) => s.removeItem);
+  const [waafiDialog, setWaafiDialog] = useState<WaafiDialogState<WaafiPayResult>>(null);
   const [manualDone, setManualDone] = useState<ManualOrder | null>(null);
   const [couponInput, setCouponInput] = useState("");
   const [couponPreview, setCouponPreview] = useState<CouponPreviewResponse | null>(null);
@@ -270,6 +118,8 @@ function CheckoutInner() {
     onSuccess: async (payment) => {
       await queryClient.invalidateQueries({ queryKey: ["dashboard-overview"] });
       await queryClient.invalidateQueries({ queryKey: ["my-payments"] });
+      // ordered: it leaves the cart (the request is on the Payments page now)
+      removeFromCart("course", course!.id);
       if (payment.status === "paid") {
         toast.success("You're enrolled!");
         router.push(`/learn/${encodeURIComponent(course!.slug)}`);
@@ -277,7 +127,8 @@ function CheckoutInner() {
       }
       // Show the WhatsApp contact so the student can send the proof of transfer to the admin right away.
       setManualDone({
-        courseTitle: course!.title,
+        kind: "course",
+        title: course!.title,
         amount: formatMinor(totalMinor, currency),
         senderPhone: senderPhone.trim(),
         reference: payRef.trim(),
@@ -299,6 +150,7 @@ function CheckoutInner() {
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["my-payments"] });
       if (result.outcome === "approved") {
+        removeFromCart("course", course!.id);
         await queryClient.invalidateQueries({ queryKey: ["dashboard-overview"] });
         await queryClient.invalidateQueries({ queryKey: ["course-enrollment-access"] });
       }
@@ -315,6 +167,7 @@ function CheckoutInner() {
       await enrollmentsApi.enroll(course.id);
     },
     onSuccess: async () => {
+      removeFromCart("course", course!.id);
       await queryClient.invalidateQueries({ queryKey: ["dashboard-overview"] });
       await queryClient.invalidateQueries({ queryKey: ["course-enrollment-access"] });
       toast.success("You're enrolled!");
@@ -374,7 +227,7 @@ function CheckoutInner() {
     );
   }
 
-  if (isLoading || !course || !pricing) {
+  if (isLoading || restoring || !course || !pricing) {
     return <CheckoutSkeleton />;
   }
 
@@ -481,132 +334,7 @@ function CheckoutInner() {
               </div>
             </section>
 
-            <section className="rounded-2xl border border-[#0B1F3A]/10 bg-white/90 p-4 shadow-sm ring-1 ring-black/[0.03] dark:border-white/20 dark:bg-[#132948]/80 dark:ring-white/[0.04] sm:p-5">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-base font-semibold text-[#0B1F3A] dark:text-white">Payment method</h2>
-                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[#0B1F3A] dark:text-[#FF8A66]">
-                  <Lock className="h-3 w-3" />
-                  Encrypted
-                </span>
-              </div>
-
-              <div className="mt-4 divide-y divide-[#0B1F3A]/10 overflow-hidden rounded-xl border border-[#0B1F3A]/12 bg-white shadow-sm dark:divide-white/10 dark:border-white/20 dark:bg-[#061528]/80">
-                {/* 1 — WaafiPay: USSD prompt + PIN on the phone */}
-                <div
-                  className={cn(
-                    "border-l-[3px] border-l-transparent transition-colors",
-                    payMethod === "wafi" && "border-l-[#E84A27] bg-[#0B1F3A]/[0.03] dark:bg-[#061528]"
-                  )}
-                >
-                  <MethodButton
-                    active={payMethod === "wafi"}
-                    onClick={() => setPayMethod("wafi")}
-                    icon={<Wallet className="h-5 w-5 shrink-0 text-muted-foreground" />}
-                    title="WaafiPay"
-                    subtitle="EVC Plus · Zaad · Sahal · eDahab — pay now with your PIN"
-                    badge="Instant"
-                  />
-                  {payMethod === "wafi" ? (
-                    <div className="space-y-2.5 border-t border-[#0B1F3A]/10 bg-[#f8fafc] px-3 py-3 dark:border-white/15 dark:bg-[#0c1929]/55 sm:px-4">
-                      <div className="space-y-1.5">
-                        <Label htmlFor="wafi-phone" className="text-xs font-medium">
-                          Mobile wallet number
-                        </Label>
-                        <div className="flex">
-                          <span className="inline-flex h-11 items-center rounded-l-md border border-r-0 border-[#0B1F3A]/20 bg-muted px-3 text-sm font-medium text-muted-foreground dark:border-white/15">
-                            +252
-                          </span>
-                          <Input
-                            id="wafi-phone"
-                            type="tel"
-                            inputMode="numeric"
-                            autoComplete="tel-national"
-                            placeholder="61 234 5678"
-                            maxLength={20}
-                            value={wafiPhone}
-                            onChange={(e) => setWafiPhone(e.target.value)}
-                            onBlur={() => setWafiPhoneTouched(true)}
-                            className={cn(
-                              "h-11 rounded-l-none border-[#0B1F3A]/20 bg-white dark:border-white/15 dark:bg-[#143d6e]/70",
-                              wafiPhoneTouched &&
-                                wafiPhone.trim() &&
-                                !isValidSomaliMobile(wafiPhone) &&
-                                "border-destructive focus-visible:ring-destructive"
-                            )}
-                          />
-                        </div>
-                        {wafiPhoneTouched && wafiPhone.trim() && !isValidSomaliMobile(wafiPhone) ? (
-                          <p className="text-xs text-destructive">Enter a 9-digit Somali mobile number, e.g. 61 234 5678.</p>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-
-                {/* 2 — Manual: send to the institute number, an admin verifies and opens the course */}
-                <div
-                  className={cn(
-                    "border-l-[3px] border-l-transparent transition-colors",
-                    payMethod === "offline" && "border-l-[#E84A27] bg-[#0B1F3A]/[0.03] dark:bg-[#061528]"
-                  )}
-                >
-                  <MethodButton
-                    active={payMethod === "offline"}
-                    onClick={() => setPayMethod("offline")}
-                    icon={<Smartphone className="h-5 w-5 shrink-0 text-muted-foreground" />}
-                    title="Manual payment"
-                    subtitle={
-                      <>
-                        EVC Plus to <span className="font-mono font-medium text-foreground">+252 61 9993660</span> · approved by admin
-                      </>
-                    }
-                  />
-                  {payMethod === "offline" ? (
-                    <div className="space-y-3 border-t border-[#0B1F3A]/10 bg-[#f8fafc] px-3 py-3 dark:border-white/15 dark:bg-[#0c1929]/55 sm:px-4">
-                      <p className="text-[13px] leading-snug text-muted-foreground">
-                        Send <strong className="text-foreground">{formatMinor(totalMinor, currency)}</strong> with{" "}
-                        <strong className="text-foreground">EVC Plus</strong> to{" "}
-                        <strong className="font-mono text-foreground">+252 61 9993660</strong>, then submit this form. We
-                        check the transfer and open your course — usually within a few business hours.
-                      </p>
-                      <div className="grid gap-2.5 sm:grid-cols-2">
-                        <div className="space-y-1.5">
-                          <Label htmlFor="sender-phone" className="text-xs font-medium">
-                            Number you paid from
-                          </Label>
-                          <Input
-                            id="sender-phone"
-                            type="tel"
-                            inputMode="numeric"
-                            placeholder="61 234 5678"
-                            maxLength={20}
-                            value={senderPhone}
-                            onChange={(e) => setSenderPhone(e.target.value)}
-                            className={cn(
-                              "h-10 border-[#0B1F3A]/20 bg-white dark:border-white/15 dark:bg-[#143d6e]/70",
-                              senderPhone.trim() && !isValidSomaliMobile(senderPhone) && "border-destructive"
-                            )}
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="pay-ref" className="text-xs font-medium">
-                            Transaction ID <span className="font-normal text-muted-foreground">(optional)</span>
-                          </Label>
-                          <Input
-                            id="pay-ref"
-                            placeholder="From the EVC SMS"
-                            maxLength={64}
-                            value={payRef}
-                            onChange={(e) => setPayRef(e.target.value)}
-                            className="h-10 border-[#0B1F3A]/20 bg-white dark:border-white/15 dark:bg-[#143d6e]/70"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </section>
+            <PaymentMethodSection form={pay} amountLabel={formatMinor(totalMinor, currency)} itemNoun="course" />
 
             <section className="space-y-3 lg:hidden">
               <h2 className="text-base font-semibold text-[#0B1F3A] dark:text-white">Your course</h2>
@@ -773,7 +501,7 @@ function CheckoutInner() {
                     }
                     const coupon_code = couponPreview?.valid && couponPreview.code ? couponPreview.code : undefined;
                     if (payMethod === "wafi") {
-                      setWafiPhoneTouched(true);
+                      pay.setWafiPhoneTouched(true);
                       if (!isValidSomaliMobile(wafiPhone)) {
                         toast.error("Enter your 9-digit mobile wallet number, e.g. 61 234 5678.");
                         return;
@@ -822,92 +550,21 @@ function CheckoutInner() {
       <WaafiDialog
         state={waafiDialog}
         onClose={() => setWaafiDialog(null)}
-        onOpenCourse={(s) => {
+        successLabel="Start learning"
+        onSuccess={(r) => {
           setWaafiDialog(null);
-          router.push(`/learn/${encodeURIComponent(s)}`);
+          router.push(`/learn/${encodeURIComponent(r.course_slug || course.slug)}`);
         }}
       />
       <ManualOrderDialog
         order={manualDone}
+        closeLabel="Go to my payments"
         onClose={() => {
           setManualDone(null);
           router.push("/dashboard/payments");
         }}
       />
     </div>
-  );
-}
-
-type ManualOrder = {
-  courseTitle: string;
-  amount: string;
-  senderPhone: string;
-  reference: string;
-  paymentId: string;
-};
-
-function WhatsAppIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
-      <path d="M17.47 14.38c-.3-.15-1.75-.86-2.02-.96-.27-.1-.47-.15-.67.15-.2.3-.77.96-.94 1.16-.17.2-.35.22-.64.07-.3-.15-1.25-.46-2.38-1.47-.88-.79-1.47-1.76-1.65-2.06-.17-.3-.02-.46.13-.6.13-.14.3-.35.45-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.03-.52-.07-.15-.67-1.6-.92-2.2-.24-.58-.48-.5-.67-.51h-.57c-.2 0-.52.07-.8.37-.27.3-1.04 1.02-1.04 2.48s1.07 2.88 1.21 3.08c.15.2 2.1 3.2 5.08 4.49.71.31 1.26.49 1.7.63.71.23 1.36.2 1.87.12.57-.09 1.75-.72 2-1.41.25-.7.25-1.29.17-1.41-.07-.13-.27-.2-.57-.35M12.05 21.5h-.01a9.4 9.4 0 0 1-4.8-1.31l-.34-.2-3.57.93.95-3.48-.22-.36a9.4 9.4 0 0 1-1.44-5.02c0-5.2 4.23-9.43 9.44-9.43a9.4 9.4 0 0 1 9.43 9.44c0 5.2-4.24 9.43-9.44 9.43m8.03-17.47A11.3 11.3 0 0 0 12.05.7C5.79.7.7 5.79.7 12.04c0 2 .52 3.95 1.52 5.67L.6 23.6l6.02-1.58a11.3 11.3 0 0 0 5.42 1.38h.01c6.25 0 11.34-5.09 11.35-11.34 0-3.03-1.18-5.88-3.32-8.02" />
-    </svg>
-  );
-}
-
-/** After a manual (EVC to the institute number) order: one tap opens WhatsApp with the order details filled in. */
-function ManualOrderDialog({ order, onClose }: { order: ManualOrder | null; onClose: () => void }) {
-  const waNumber = SODEMY_CONTACT.whatsappUrl.replace(/\D/g, "");
-  const text = order
-    ? [
-        "Asc, waxaan iibsaday koorso Laambad (Manual payment / EVC Plus).",
-        `Koorsada: ${order.courseTitle}`,
-        `Lacagta: ${order.amount}`,
-        order.senderPhone ? `Lambarka aan ka diray: ${order.senderPhone}` : "",
-        order.reference ? `Transaction ID: ${order.reference}` : "",
-        order.paymentId ? `Order: ${order.paymentId.slice(0, 8)}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n")
-    : "";
-  const href = `https://wa.me/${waNumber}?text=${encodeURIComponent(text)}`;
-  return (
-    <Dialog open={!!order} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-sm text-center">
-        <CheckCircle2 className="mx-auto h-14 w-14 text-success" />
-        <DialogTitle className="text-lg">Order submitted</DialogTitle>
-        <DialogDescription className="text-[14px] leading-relaxed">
-          Send us your payment confirmation on WhatsApp and we will open your course as soon as we check the transfer.
-        </DialogDescription>
-        <a
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-2 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#25D366] text-[15px] font-semibold text-white shadow-sm transition hover:bg-[#1ebe57]"
-        >
-          <WhatsAppIcon className="h-5 w-5" />
-          Send on WhatsApp
-        </a>
-        <Button variant="outline" className="w-full" onClick={onClose}>
-          Go to my payments
-        </Button>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function CheckoutHeader({ cancelHref }: { cancelHref: string }) {
-  return (
-    <header className="sticky top-0 z-40 border-b border-[#0B1F3A]/12 bg-white/90 shadow-[0_1px_0_rgba(232,93,4,0.06)] backdrop-blur-md dark:border-white/20 dark:bg-[#1a2f4a]/90 dark:shadow-[0_1px_0_rgba(232,93,4,0.08)]">
-      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:h-16 sm:px-6">
-        <Logo size="sm" href="/" />
-        <Link
-          href={cancelHref}
-          className="text-sm font-semibold text-[#0B1F3A] transition-colors hover:text-[#FF8A66] dark:text-[#FF8A66] dark:hover:text-white"
-        >
-          Cancel
-        </Link>
-      </div>
-    </header>
   );
 }
 
@@ -925,7 +582,13 @@ export function CheckoutExperience() {
         </>
       }
     >
-      <CheckoutInner />
+      <CheckoutSwitch />
     </Suspense>
   );
+}
+
+/** /checkout?book=<slug> buys a book; /checkout?slug=<slug> (or ?courseId=) a course. */
+function CheckoutSwitch() {
+  const book = useSearchParams().get("book")?.trim();
+  return book ? <BookCheckout slug={book} /> : <CheckoutInner />;
 }

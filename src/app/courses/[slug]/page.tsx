@@ -568,7 +568,8 @@ export default function PublicCourseDetailPage() {
     const effective = p ? (p.effective_amount ?? p.price) : 0;
     const cur = p?.currency || "USD";
     const added = addCartLine({
-      courseId: course.id,
+      kind: "course",
+      id: course.id,
       slug: course.slug,
       title: course.title,
       priceMinor: free ? 0 : effective,

@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import { ShoppingCartSheet } from "@/components/cart/shopping-cart-sheet";
 import { cn, getInitials } from "@/lib/utils";
 import type { User } from "@/types";
 
@@ -70,6 +71,9 @@ export function Navbar({ user, onLogout, onOpenMenu }: NavbarProps) {
           <Moon className="absolute h-5 w-5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
           <span className="sr-only">Toggle theme</span>
         </Button>
+
+        {/* Cart (courses and books) */}
+        <ShoppingCartSheet className="flex h-10 w-10 items-center justify-center text-[#0B1F3A] hover:bg-[#0B1F3A]/10 dark:text-white dark:hover:bg-white/15" />
 
         {/* Notifications */}
         <Button
