@@ -46,7 +46,7 @@ type Props = {
   footer?: React.ReactNode;
 };
 
-/** A quiz / assignment row under its lesson (or at the top of a topic). */
+/** A quiz / assignment of the topic: a row like a lesson (after its lesson, or at the end of the topic). */
 function ItemRow({
   kind,
   item,
@@ -80,14 +80,14 @@ function ItemRow({
         onClick={onOpen}
         aria-current={active ? "true" : undefined}
         className={cn(
-          "group flex w-full items-center gap-2.5 rounded-lg py-2 pl-3 pr-2 text-left transition-all",
+          "group flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition-all",
           active ? "bg-brand/[0.08] ring-1 ring-brand/30 dark:bg-brand/15" : "hover:bg-[#0B1F3A]/[0.05] dark:hover:bg-white/5",
           item.locked && "opacity-60",
         )}
       >
         <span
           className={cn(
-            "flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md",
+            "mt-0.5 flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md",
             done ? "bg-success text-white" : kind === "quiz" ? "bg-brand-soft text-brand" : "bg-[#0B1F3A]/10 text-[#0B1F3A] dark:bg-white/10 dark:text-white",
           )}
           aria-hidden
@@ -95,10 +95,10 @@ function ItemRow({
           {item.locked ? <Lock className="h-3 w-3" /> : done ? (kind === "quiz" ? <Award className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" strokeWidth={3} />) : <Icon className="h-3.5 w-3.5" />}
         </span>
         <span className="min-w-0 flex-1">
-          <span className={cn("line-clamp-2 text-[13.5px] leading-snug", active ? "font-semibold text-[#0f172a] dark:text-white" : "text-[#1e293b] dark:text-white/85")}>
+          <span className={cn("line-clamp-2 text-[14.5px] leading-snug", active ? "font-semibold text-[#0f172a] dark:text-white" : "text-[#1e293b] dark:text-white/85")}>
             {item.title}
           </span>
-          <span className="block text-[11.5px] text-muted-foreground">{meta}</span>
+          <span className="mt-1 block text-[12px] text-muted-foreground">{meta}</span>
         </span>
       </button>
     </li>
@@ -305,9 +305,6 @@ export function CourseCurriculumSidebar({
               >
                 <div className="min-h-0 overflow-hidden">
                   <ul className="mb-2 ml-[21px] border-l-2 border-[#0B1F3A]/10 pl-3 dark:border-white/10">
-                    {maps?.bySection.get(section.id)
-                      ? itemRows(maps.bySection.get(section.id)!.quizzes, maps.bySection.get(section.id)!.assignments)
-                      : null}
                     {lessons.map((lesson) => {
                       const isActive = lesson.id === activeLessonId && !activeItem;
                       const done = isDone(progressByLesson.get(lesson.id));
@@ -366,14 +363,15 @@ export function CourseCurriculumSidebar({
                               </span>
                             </span>
                           </button>
-                          {extras && (extras.quizzes.length || extras.assignments.length) ? (
-                            <ul className="mb-1 ml-[34px] space-y-0.5 border-l border-dashed border-[#0B1F3A]/15 pl-2 dark:border-white/15">
-                              {itemRows(extras.quizzes, extras.assignments)}
-                            </ul>
-                          ) : null}
+                          {/* Phase 2: the topic's quizzes / assignments placed after this lesson — rows of the topic, not under the lesson */}
+                          {extras && (extras.quizzes.length || extras.assignments.length) ? <ul>{itemRows(extras.quizzes, extras.assignments)}</ul> : null}
                         </li>
                       );
                     })}
+                    {/* the end of the topic */}
+                    {maps?.bySection.get(section.id)
+                      ? itemRows(maps.bySection.get(section.id)!.quizzes, maps.bySection.get(section.id)!.assignments)
+                      : null}
                   </ul>
                 </div>
               </div>

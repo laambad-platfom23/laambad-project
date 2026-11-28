@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, Fragment } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { coursesApi } from "@/services/api/courses";
 import {
@@ -47,14 +47,27 @@ import {
 import {
   BuilderItemsProvider,
   CourseMaterials,
+  AfterLessonItems,
   LessonItems,
   TopicItems,
   UnplacedItems,
   type LessonOption,
+  type TopicOption,
 } from "@/components/dashboard/course-builder/lesson-items";
 import type { Course } from "@/types";
 import { AssetUploadButton } from "@/components/dashboard/asset-upload-button";
 import { useRegisterUnsaved } from "@/components/dashboard/course-builder/unsaved";
+
+/** Phase 2: topics with their lessons, in order, for the "topic and position" picker. */
+function topicOptionsOf(course: Course | undefined): TopicOption[] {
+  return [...(course?.sections ?? [])]
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    .map((s) => ({
+      id: s.id,
+      title: s.title,
+      lessons: [...(s.lessons ?? [])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)).map((l) => ({ id: l.id, title: l.title })),
+    }));
+}
 
 /** Every lesson of the course, in order, for the "which lesson" pickers. */
 function lessonOptionsOf(course: Course | undefined): LessonOption[] {
@@ -129,6 +142,7 @@ function ManageCourseCurriculumInner({ courseId, open, onOpenChange, bare = fals
   });
 
   const lessonOptions = lessonOptionsOf(course);
+  const topicOptions = topicOptionsOf(course);
 
   // Course Builder: same editor without the dialog chrome
   if (bare) {
@@ -142,7 +156,7 @@ function ManageCourseCurriculumInner({ courseId, open, onOpenChange, bare = fals
           )}
 
           {!isLoading && course && (
-            <BuilderItemsProvider courseId={course.id} lessonOptions={lessonOptions}>
+            <BuilderItemsProvider courseId={course.id} lessonOptions={lessonOptions} topics={topicOptions}>
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
                 Add topics, then lessons inside each. Under every lesson you can add a <strong>quiz</strong>, an{" "}
@@ -225,7 +239,7 @@ function ManageCourseCurriculumInner({ courseId, open, onOpenChange, bare = fals
           )}
 
           {!isLoading && course && (
-            <BuilderItemsProvider courseId={course.id} lessonOptions={lessonOptions}>
+            <BuilderItemsProvider courseId={course.id} lessonOptions={lessonOptions} topics={topicOptions}>
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
                 Add or edit sections (modules), then lessons inside each. Under every lesson you can add a quiz, an assignment or a
@@ -409,17 +423,20 @@ function SectionCard({
       </div>
       {moduleOpen && (
         <div className="ml-2 space-y-3 border-l-2 border-primary/20 pl-4">
-          <TopicItems sectionId={section.id} />
           {(section.lessons ?? []).map((lesson, li) => (
-            <LessonCard
-              key={lesson.id}
-              courseId={courseId}
-              lesson={lesson}
-              lessonIndex={li}
-              onInvalidate={onInvalidate}
-              initialCollapsed={lesson.id !== openLessonId}
-            />
+            <Fragment key={lesson.id}>
+              <LessonCard
+                courseId={courseId}
+                lesson={lesson}
+                lessonIndex={li}
+                onInvalidate={onInvalidate}
+                initialCollapsed={lesson.id !== openLessonId}
+              />
+              {/* Phase 2: the topic's quizzes / assignments placed after this lesson */}
+              <AfterLessonItems lessonId={lesson.id} />
+            </Fragment>
           ))}
+          <TopicItems sectionId={section.id} />
           <Button
             type="button"
             variant="outline"

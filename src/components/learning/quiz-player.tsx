@@ -1,5 +1,6 @@
 "use client";
 
+import { Input } from "@/components/ui/input";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -241,7 +242,11 @@ function QuizTaking({
     try {
       const { data } = await quizPlayApi.submit(
         attempt.attempt_id,
-        attempt.questions.map((q) => ({ question_id: q.id, keys: answersRef.current[q.id] ?? [] }))
+        attempt.questions.map((q) =>
+          q.short
+            ? { question_id: q.id, keys: [], answer: (answersRef.current[q.id]?.[0] ?? "").trim() }
+            : { question_id: q.id, keys: answersRef.current[q.id] ?? [] }
+        )
       );
       try {
         localStorage.removeItem(storeKey);
@@ -280,7 +285,7 @@ function QuizTaking({
   }, [attempt.deadline]);
 
   const q = attempt.questions[index];
-  const answered = attempt.questions.filter((x) => answers[x.id]?.length).length;
+  const answered = attempt.questions.filter((x) => (answers[x.id] ?? []).some((v) => String(v).trim())).length;
   const choose = (key: string) =>
     setAnswers((cur) => {
       const now = cur[q.id] ?? [];
@@ -316,10 +321,21 @@ function QuizTaking({
       <div>
         <p className="whitespace-pre-wrap text-lg font-semibold leading-snug">{q.text}</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          {q.multiple ? "Select all answers that apply" : "Choose one answer"} · {q.points} {q.points === 1 ? "point" : "points"}
+          {q.short ? "Type your answer" : q.multiple ? "Select all answers that apply" : "Choose one answer"} · {q.points} {q.points === 1 ? "point" : "points"}
         </p>
       </div>
 
+      {q.short ? (
+        <Input
+          key={q.id}
+          value={answers[q.id]?.[0] ?? ""}
+          onChange={(e) => setAnswers((cur) => ({ ...cur, [q.id]: e.target.value ? [e.target.value] : [] }))}
+          placeholder="Your answer"
+          maxLength={500}
+          className="h-12 text-[15px]"
+          autoFocus
+        />
+      ) : null}
       <div className="space-y-2">
         {q.options.map((o) => {
           const on = (answers[q.id] ?? []).includes(o.key);
@@ -430,7 +446,19 @@ function QuizResultView({
                   {/^\d+\s*[.)]/.test(f.text) ? f.text : `${i + 1}. ${f.text}`}
                 </p>
               </div>
-              <ul className="mt-2 space-y-1 pl-7 text-sm">
+              {f.short ? (
+                <div className="mt-2 space-y-1 pl-7 text-sm">
+                  <p className={cn("rounded-lg px-3 py-1.5", f.correct ? "bg-success-soft font-medium text-success" : "bg-destructive/10 text-destructive")}>
+                    ➜ Your answer: {f.chosen[0] ? `“${f.chosen[0]}”` : "(no answer)"}
+                  </p>
+                  {f.options.length ? (
+                    <p className="rounded-lg bg-success-soft px-3 py-1.5 font-medium text-success">
+                      Accepted: {f.options.map((o) => o.text).join(" · ")} ✓
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              <ul className={cn("mt-2 space-y-1 pl-7 text-sm", f.short && "hidden")}>
                 {f.options.map((o) => (
                   <li
                     key={o.key}

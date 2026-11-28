@@ -168,7 +168,7 @@ export type BuilderItems = {
   legacy_resources: { course: ResourceFile[]; lessons: { lesson_id: string; files: ResourceFile[] }[] };
 };
 
-export type QuestionType = "single_choice" | "multiple_choice" | "true_false";
+export type QuestionType = "single_choice" | "multiple_choice" | "true_false" | "short_answer";
 export type EditorQuestion = {
   id?: string;
   type: QuestionType;

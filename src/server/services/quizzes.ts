@@ -91,7 +91,8 @@ export async function getQuiz(id: string) {
 
 // ── Course Builder: one quiz with its questions, in the editor's shape ──
 
-const TYPES = ["single_choice", "multiple_choice", "true_false"] as const;
+/** Phase 2: "short_answer" = the student types the answer; the options are the accepted answers. */
+const TYPES = ["single_choice", "multiple_choice", "true_false", "short_answer"] as const;
 type QType = (typeof TYPES)[number];
 
 type EditorQuestion = {
@@ -189,6 +190,23 @@ function cleanQuestion(raw: unknown, i: number): EditorQuestion {
     text: String((o as { text?: unknown })?.text ?? "").trim().slice(0, 1000),
     correct: (o as { correct?: unknown })?.correct === true,
   }));
+  if (type === "short_answer") {
+    // every listed answer is accepted (case, spaces and end punctuation do not matter when grading)
+    // one entry per spelling: "Mogadishu" and "mogadishu" are the same answer when grading
+    const seen = new Set<string>();
+    const accepted = options
+      .map((o) => o.text)
+      .filter((t) => {
+        const k = t.toLowerCase().replace(/\s+/g, " ").trim();
+        if (!k || seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      })
+      .slice(0, 12);
+    if (!accepted.length) throw Err.invalidInput(`${where}: write the accepted answer`);
+    const id = typeof q.id === "string" && q.id ? q.id : undefined;
+    return { id, type, text, explanation, points, options: accepted.map((t) => ({ text: t, correct: true })) };
+  }
   if (type === "true_false") {
     if (options.length !== 2) throw Err.invalidInput(`${where}: a true/false question has exactly 2 answers`);
     options = [

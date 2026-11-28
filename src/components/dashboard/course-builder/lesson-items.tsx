@@ -25,10 +25,12 @@ import { ResourceDialog } from "@/components/dashboard/course-builder/resource-d
 import { cn, getApiErrorMessage } from "@/lib/utils";
 
 export type LessonOption = { id: string; title: string; sectionTitle: string };
+export type { TopicOption } from "@/components/dashboard/course-builder/position-select";
+import type { TopicOption } from "@/components/dashboard/course-builder/position-select";
 
 type DialogState =
-  | { kind: "quiz"; id: string | null; lessonId: string | null }
-  | { kind: "assignment"; id: string | null; lessonId: string | null }
+  | { kind: "quiz"; id: string | null; lessonId: string | null; sectionId?: string | null }
+  | { kind: "assignment"; id: string | null; lessonId: string | null; sectionId?: string | null }
   | { kind: "resource"; resource: BuilderResource | null; lessonId: string | null }
   | null;
 
@@ -37,6 +39,7 @@ type Ctx = {
   items: BuilderItems | undefined;
   loading: boolean;
   lessonOptions: LessonOption[];
+  topics: TopicOption[];
   open: (d: DialogState) => void;
   refresh: () => void;
 };
@@ -52,10 +55,13 @@ function useBuilder() {
 export function BuilderItemsProvider({
   courseId,
   lessonOptions,
+  topics,
   children,
 }: {
   courseId: string;
   lessonOptions: LessonOption[];
+  /** Phase 2: topics with their lessons, for the "topic and position" picker */
+  topics: TopicOption[];
   children: React.ReactNode;
 }) {
   const qc = useQueryClient();
@@ -74,7 +80,7 @@ export function BuilderItemsProvider({
     if (!o) setDlg(null);
   };
   return (
-    <BuilderCtx.Provider value={{ courseId, items, loading: isLoading, lessonOptions, open: setDlg, refresh }}>
+    <BuilderCtx.Provider value={{ courseId, items, loading: isLoading, lessonOptions, topics, open: setDlg, refresh }}>
       {children}
       <QuizEditorDialog
         open={dlg?.kind === "quiz"}
@@ -82,7 +88,8 @@ export function BuilderItemsProvider({
         courseId={courseId}
         quizId={dlg?.kind === "quiz" ? dlg.id : null}
         lessonId={dlg?.kind === "quiz" ? dlg.lessonId : null}
-        lessonOptions={lessonOptions}
+        sectionId={dlg?.kind === "quiz" ? dlg.sectionId ?? null : null}
+        topics={topics}
         onSaved={refresh}
       />
       <AssignmentEditorDialog
@@ -91,7 +98,8 @@ export function BuilderItemsProvider({
         courseId={courseId}
         assignmentId={dlg?.kind === "assignment" ? dlg.id : null}
         lessonId={dlg?.kind === "assignment" ? dlg.lessonId : null}
-        lessonOptions={lessonOptions}
+        sectionId={dlg?.kind === "assignment" ? dlg.sectionId ?? null : null}
+        topics={topics}
         onSaved={refresh}
       />
       <ResourceDialog
@@ -181,7 +189,7 @@ function QuizRowB({ q }: { q: BuilderQuiz }) {
       meta={`Quiz · ${q.question_count} questions · pass ${q.pass_percent}%${q.time_limit_secs ? ` · ${Math.round(q.time_limit_secs / 60)} min` : ""}${q.attempt_count ? ` · ${q.attempt_count} attempts` : ""}`}
       actions={
         <>
-          <Button type="button" variant="ghost" size="sm" className="h-8 px-2" onClick={() => open({ kind: "quiz", id: q.id, lessonId: q.lesson_id })}>
+          <Button type="button" variant="ghost" size="sm" className="h-8 px-2" onClick={() => open({ kind: "quiz", id: q.id, lessonId: q.lesson_id, sectionId: q.section_id })}>
             <Pencil className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Edit</span>
           </Button>
           <Button
@@ -236,7 +244,7 @@ function AssignmentRowB({ a }: { a: BuilderAssignment }) {
               </Link>
             </Button>
           ) : null}
-          <Button type="button" variant="ghost" size="sm" className="h-8 px-2" onClick={() => open({ kind: "assignment", id: a.id, lessonId: a.lesson_id })}>
+          <Button type="button" variant="ghost" size="sm" className="h-8 px-2" onClick={() => open({ kind: "assignment", id: a.id, lessonId: a.lesson_id, sectionId: a.section_id })}>
             <Pencil className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Edit</span>
           </Button>
           <Button
@@ -320,19 +328,16 @@ function LegacyFileRowB({ f }: { f: ResourceFile }) {
 
 // ───────────────────────── blocks used by the curriculum editor ─────────────────────────
 
-/** Under a lesson: its quizzes, assignments and resources + the three "add" buttons. */
+/** Under a lesson: its resources (Phase 2: quizzes and assignments belong to the topic, see TopicItems). */
 export function LessonItems({ lessonId }: { lessonId: string }) {
   const { items, open } = useBuilder();
-  const quizzes = items?.quizzes.filter((q) => q.lesson_id === lessonId) ?? [];
-  const assignments = items?.assignments.filter((a) => a.lesson_id === lessonId) ?? [];
   const resources = items?.resources.filter((r) => r.lesson_id === lessonId) ?? [];
   const legacy = items?.legacy_resources.lessons.find((l) => l.lesson_id === lessonId)?.files ?? [];
-  const any = quizzes.length + assignments.length + resources.length + legacy.length > 0;
+  const any = resources.length + legacy.length > 0;
   return (
     <div className="space-y-2 pl-1 sm:pl-10">
       {any ? (
         <ul className="space-y-1.5">
-          <ItemList quizzes={quizzes} assignments={assignments} />
           {resources.map((r) => (
             <ResourceRowB key={r.id} r={r} />
           ))}
@@ -342,32 +347,47 @@ export function LessonItems({ lessonId }: { lessonId: string }) {
         </ul>
       ) : null}
       <div className="flex flex-wrap gap-1.5">
-        <Button type="button" variant="outline" size="sm" className="h-8 border-dashed" onClick={() => open({ kind: "quiz", id: null, lessonId })}>
-          <Plus className="h-3.5 w-3.5" /> Quiz
-        </Button>
-        <Button type="button" variant="outline" size="sm" className="h-8 border-dashed" onClick={() => open({ kind: "assignment", id: null, lessonId })}>
-          <Plus className="h-3.5 w-3.5" /> Assignment
-        </Button>
         <Button type="button" variant="outline" size="sm" className="h-8 border-dashed" onClick={() => open({ kind: "resource", resource: null, lessonId })}>
-          <Plus className="h-3.5 w-3.5" /> Resource
+          <Plus className="h-3.5 w-3.5" /> Lesson resource
         </Button>
       </div>
     </div>
   );
 }
 
-/** Old-site quizzes / assignments that sit at the top of a topic (not under a lesson). */
-export function TopicItems({ sectionId }: { sectionId: string }) {
+/** The topic's quizzes / assignments placed right after this lesson: rows of the topic, not of the lesson. */
+export function AfterLessonItems({ lessonId }: { lessonId: string }) {
   const { items } = useBuilder();
-  const quizzes = items?.quizzes.filter((q) => q.placed && q.section_id === sectionId && !q.lesson_id) ?? [];
-  const assignments = items?.assignments.filter((a) => a.placed && a.section_id === sectionId && !a.lesson_id) ?? [];
+  const quizzes = items?.quizzes.filter((q) => q.lesson_id === lessonId) ?? [];
+  const assignments = items?.assignments.filter((a) => a.lesson_id === lessonId) ?? [];
   if (!quizzes.length && !assignments.length) return null;
   return (
+    <ul className="space-y-1.5">
+      <ItemList quizzes={quizzes} assignments={assignments} />
+    </ul>
+  );
+}
+
+/** Phase 2: the topic's own quizzes / assignments at its end, and the buttons that add them to the topic. */
+export function TopicItems({ sectionId }: { sectionId: string }) {
+  const { items, open } = useBuilder();
+  const quizzes = items?.quizzes.filter((q) => q.placed && q.section_id === sectionId && !q.lesson_id) ?? [];
+  const assignments = items?.assignments.filter((a) => a.placed && a.section_id === sectionId && !a.lesson_id) ?? [];
+  return (
     <div className="space-y-1.5">
-      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">In this topic</p>
-      <ul className="space-y-1.5">
-        <ItemList quizzes={quizzes} assignments={assignments} />
-      </ul>
+      {quizzes.length || assignments.length ? (
+        <ul className="space-y-1.5">
+          <ItemList quizzes={quizzes} assignments={assignments} />
+        </ul>
+      ) : null}
+      <div className="flex flex-wrap gap-1.5">
+        <Button type="button" variant="outline" size="sm" className="h-8 border-dashed" onClick={() => open({ kind: "quiz", id: null, lessonId: null, sectionId })}>
+          <Plus className="h-3.5 w-3.5" /> Quiz in this topic
+        </Button>
+        <Button type="button" variant="outline" size="sm" className="h-8 border-dashed" onClick={() => open({ kind: "assignment", id: null, lessonId: null, sectionId })}>
+          <Plus className="h-3.5 w-3.5" /> Assignment in this topic
+        </Button>
+      </div>
     </div>
   );
 }
@@ -402,7 +422,7 @@ export function UnplacedItems() {
       </div>
       <p className="text-xs text-muted-foreground">
         Students do not see these. They were in topics that no longer exist (several come from deleted copies of courses on the old site). Edit one
-        and choose a lesson to show it, or delete it.
+        and choose a topic to show it, or delete it.
       </p>
       {open ? (
         <ul className="space-y-1.5">

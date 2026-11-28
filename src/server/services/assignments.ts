@@ -414,6 +414,8 @@ type AssignmentInput = {
   pass_points?: number | null;
   published?: boolean;
   lesson_id?: string | null;
+  /** Phase 2: at the end of this topic (when there is no lesson_id) */
+  section_id?: string | null;
   files?: unknown;
 };
 
@@ -491,7 +493,8 @@ export async function createForCourse(user: AuthUser, courseId: string, input: A
   const ctx = await courseContext(user, courseId, "staff");
   if (!String(input.title ?? "").trim()) throw Err.invalidInput("give the assignment a title");
   const data = cleanInput(input, ctx.id);
-  const place = await resolvePlacement(ctx.id, { lesson_id: input.lesson_id }, { requireLesson: true });
+  const place = await resolvePlacement(ctx.id, { lesson_id: input.lesson_id, section_id: input.section_id });
+  if (!place.sectionId) throw Err.invalidInput("choose the topic this assignment belongs to");
   const t = now();
   const row = await prisma.assignment.create({
     data: {
@@ -518,7 +521,10 @@ export async function updateAssignment(user: AuthUser, id: string, input: Assign
   const a = await staffAssignment(user, id);
   const data = cleanInput(input, a.courseId, a);
   const place =
-    input.lesson_id !== undefined ? await resolvePlacement(a.courseId, { lesson_id: input.lesson_id }, { requireLesson: true }) : undefined;
+    input.lesson_id !== undefined || input.section_id !== undefined
+      ? await resolvePlacement(a.courseId, { lesson_id: input.lesson_id, section_id: input.section_id })
+      : undefined;
+  if (place && !place.sectionId) throw Err.invalidInput("choose the topic this assignment belongs to");
   const files = input.files === undefined ? undefined : briefFiles(input.files, a.courseId, parseFiles(a.attachmentsJson));
   // moved to another lesson: it goes after that lesson's other quizzes / assignments
   const moved = !!place && (place.lessonId !== a.lessonId || place.sectionId !== a.sectionId);

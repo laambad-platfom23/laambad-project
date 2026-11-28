@@ -1,5 +1,6 @@
 "use client";
 
+import { PositionSelect, positionPayload, positionValue, type TopicOption } from "@/components/dashboard/course-builder/position-select";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, ArrowDown, ArrowUp, BrainCircuit, CheckCircle2, Circle, Loader2, Plus, Square, SquareCheck, Trash2, X } from "lucide-react";
@@ -14,7 +15,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { staffQuizApi, type EditorQuestion, type QuestionType } from "@/services/api/course-items";
 import { cn, getApiErrorMessage } from "@/lib/utils";
-import type { LessonOption } from "@/components/dashboard/course-builder/lesson-items";
 
 type Q = EditorQuestion & { key: string };
 
@@ -22,6 +22,7 @@ const TYPE_LABEL: Record<QuestionType, string> = {
   single_choice: "One correct answer",
   multiple_choice: "Several correct answers",
   true_false: "True / False",
+  short_answer: "Short answer (typed)",
 };
 
 const key = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
@@ -34,7 +35,9 @@ function newQuestion(type: QuestionType = "single_choice"): Q {
     explanation: null,
     points: 1,
     options:
-      type === "true_false"
+      type === "short_answer"
+        ? [{ text: "", correct: true }]
+        : type === "true_false"
         ? [
             { text: "True", correct: true },
             { text: "False", correct: false },
@@ -54,6 +57,10 @@ function problem(qs: Q[], title: string, published: boolean): string | null {
   for (const [i, q] of qs.entries()) {
     const where = `Question ${i + 1}`;
     if (!q.text.trim()) return `${where}: write the question.`;
+    if (q.type === "short_answer") {
+      if (!q.options.some((o) => o.text.trim())) return `${where}: write the accepted answer.`;
+      continue;
+    }
     if (q.options.length < 2) return `${where}: add at least 2 answers.`;
     if (q.options.some((o) => !o.text.trim())) return `${where}: an answer is empty.`;
     const correct = q.options.filter((o) => o.correct).length;
@@ -69,16 +76,18 @@ export function QuizEditorDialog({
   courseId,
   quizId,
   lessonId,
-  lessonOptions,
+  sectionId,
+  topics,
   onSaved,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   courseId: string;
-  /** null = a new quiz under `lessonId` */
+  /** null = a new quiz: after `lessonId`, or at the end of topic `sectionId` */
   quizId: string | null;
   lessonId: string | null;
-  lessonOptions: LessonOption[];
+  sectionId?: string | null;
+  topics: TopicOption[];
   onSaved: () => void;
 }) {
   const { data, isLoading, isError, error } = useQuery({
@@ -95,8 +104,7 @@ export function QuizEditorDialog({
   const [attempts, setAttempts] = useState("0");
   const [shuffle, setShuffle] = useState(false);
   const [published, setPublished] = useState(true);
-  const [lesson, setLesson] = useState<string>("");
-  const [sectionOnly, setSectionOnly] = useState<string | null>(null);
+  const [pos, setPos] = useState<string>("");
   const [questions, setQuestions] = useState<Q[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -110,8 +118,7 @@ export function QuizEditorDialog({
       setAttempts("0");
       setShuffle(false);
       setPublished(true);
-      setLesson(lessonId ?? "");
-      setSectionOnly(null);
+      setPos(positionValue({ lesson_id: lessonId, section_id: sectionId }));
       setQuestions([newQuestion()]);
     } else if (data) {
       setTitle(data.title);
@@ -121,11 +128,10 @@ export function QuizEditorDialog({
       setAttempts(String(data.max_attempts));
       setShuffle(data.shuffle_questions);
       setPublished(data.published);
-      setLesson(data.lesson_id ?? "");
-      setSectionOnly(data.lesson_id ? null : data.section_id);
+      setPos(positionValue(data));
       setQuestions(data.questions.map((q) => ({ ...q, key: key() })));
     }
-  }, [open, quizId, data, lessonId]);
+  }, [open, quizId, data, lessonId, sectionId]);
 
   const update = (k: string, patch: Partial<Q>) => setQuestions((cur) => cur.map((q) => (q.key === k ? { ...q, ...patch } : q)));
   const move = (i: number, d: -1 | 1) =>
@@ -139,6 +145,14 @@ export function QuizEditorDialog({
 
   const setType = (q: Q, type: QuestionType) => {
     if (type === q.type) return;
+    if (type === "short_answer") {
+      update(q.key, { type, options: [{ text: "", correct: true }] });
+      return;
+    }
+    if (q.type === "short_answer") {
+      update(q.key, { type, options: newQuestion(type).options });
+      return;
+    }
     if (type === "true_false") {
       update(q.key, { type, options: [{ text: "True", correct: true }, { text: "False", correct: false }] });
       return;
@@ -165,14 +179,15 @@ export function QuizEditorDialog({
       toast.error(p);
       return;
     }
-    if (!lesson && !sectionOnly) {
-      toast.error("Choose the lesson this quiz belongs to.");
+    const place = positionPayload(pos);
+    if (!place) {
+      toast.error("Choose the topic of this quiz and where it goes.");
       return;
     }
     setSaving(true);
     const payload = {
       course_id: courseId,
-      ...(lesson ? { lesson_id: lesson } : { lesson_id: null, section_id: sectionOnly }),
+      ...place,
       title: title.trim(),
       description: description.trim(),
       time_limit_secs: Math.max(0, Math.round(Number(minutes) || 0)) * 60,
@@ -243,27 +258,9 @@ export function QuizEditorDialog({
                   <Textarea id="qz-desc" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What the quiz covers, rules…" />
                 </div>
                 <div className="space-y-1.5 sm:col-span-2">
-                  <Label>Lesson</Label>
-                  <Select
-                    value={lesson || (sectionOnly ? "__topic__" : "")}
-                    onValueChange={(v) => {
-                      if (v === "__topic__") return;
-                      setLesson(v);
-                      setSectionOnly(null);
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Choose a lesson" />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-72">
-                      {sectionOnly ? <SelectItem value="__topic__">At the top of its topic (as on the old site)</SelectItem> : null}
-                      {lessonOptions.map((l) => (
-                        <SelectItem key={l.id} value={l.id}>
-                          {l.sectionTitle} › {l.title}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label>Topic and position</Label>
+                  <PositionSelect value={pos} onChange={setPos} topics={topics} />
+                  <p className="text-xs text-muted-foreground">Quizzes belong to a topic: right after one of its lessons, or at its end.</p>
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="qz-time">Time limit (minutes, 0 = none)</Label>
@@ -359,10 +356,44 @@ export function QuizEditorDialog({
                       placeholder="Write the question…"
                       className="mt-3 bg-background"
                     />
-                    <p className="mt-3 text-xs font-medium text-muted-foreground">
+                    {q.type === "short_answer" ? (
+                      <div className="mt-3 space-y-2">
+                        <p className="text-xs font-medium text-muted-foreground">
+                          Accepted answers — the student types the answer; any of these counts as correct (capital letters, spaces and a final full stop do not matter)
+                        </p>
+                        {q.options.map((o, k) => (
+                          <div key={k} className="flex items-center gap-2">
+                            <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
+                            <Input
+                              value={o.text}
+                              onChange={(e) => update(q.key, { options: q.options.map((x, j) => (j === k ? { ...x, text: e.target.value, correct: true } : x)) })}
+                              placeholder={k === 0 ? "The correct answer, e.g. Mogadishu" : "Another accepted spelling, e.g. Muqdisho"}
+                              className="border-success/50 bg-background"
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 shrink-0"
+                              disabled={q.options.length <= 1}
+                              onClick={() => update(q.key, { options: q.options.filter((_, j) => j !== k) })}
+                              aria-label="Remove accepted answer"
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                        {q.options.length < 12 ? (
+                          <Button type="button" variant="ghost" size="sm" onClick={() => update(q.key, { options: [...q.options, { text: "", correct: true }] })}>
+                            <Plus className="h-3.5 w-3.5" /> Another accepted answer
+                          </Button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <p className={cn("mt-3 text-xs font-medium text-muted-foreground", q.type === "short_answer" && "hidden")}>
                       {q.type === "multiple_choice" ? "Answers — tick every correct one" : "Answers — click the correct one"}
                     </p>
-                    <ul className="mt-1.5 space-y-2">
+                    <ul className={cn("mt-1.5 space-y-2", q.type === "short_answer" && "hidden")}>
                       {q.options.map((o, k) => (
                         <li key={k} className="flex items-center gap-2">
                           <button
@@ -412,7 +443,7 @@ export function QuizEditorDialog({
                         </li>
                       ))}
                     </ul>
-                    {q.type !== "true_false" && q.options.length < 12 ? (
+                    {q.type !== "true_false" && q.type !== "short_answer" && q.options.length < 12 ? (
                       <Button
                         type="button"
                         variant="ghost"

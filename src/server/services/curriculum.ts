@@ -71,7 +71,7 @@ export type Place = {
   section_title: string | null;
   lesson_id: string | null;
   lesson_title: string | null;
-  /** position in the course: topic-level items before the topic's first lesson, lesson items right after their lesson */
+  /** position in the course: an item right after its lesson, or (no lesson) at the end of its topic */
   pos: number;
   /** false when its topic is gone (deleted) or it never had one */
   placed: boolean;
@@ -107,7 +107,8 @@ export function placeOf(idx: PlaceIndex, item: { sectionId: string | null; lesso
   }
   const section = item.sectionId ? idx.sections.get(item.sectionId) : undefined;
   if (section) {
-    return { section_id: item.sectionId, section_title: section.title, lesson_id: null, lesson_title: null, pos: section.index * 10_000, placed: true };
+    // Phase 2: quizzes and assignments belong to the topic — without a lesson they come after all its lessons
+    return { section_id: item.sectionId, section_title: section.title, lesson_id: null, lesson_title: null, pos: section.index * 10_000 + 9_999, placed: true };
   }
   return { section_id: null, section_title: null, lesson_id: null, lesson_title: null, pos: Number.MAX_SAFE_INTEGER, placed: false };
 }

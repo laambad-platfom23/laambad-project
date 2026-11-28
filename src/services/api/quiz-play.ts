@@ -46,7 +46,7 @@ export type QuizToTake = {
   started_at: string;
   time_limit_secs: number;
   deadline: string | null;
-  questions: { id: string; type: string; text: string; points: number; multiple: boolean; options: { key: string; text: string }[] }[];
+  questions: { id: string; type: string; text: string; points: number; multiple: boolean; short?: boolean; options: { key: string; text: string }[] }[];
 };
 
 export type QuizAttemptResult = {
@@ -67,6 +67,8 @@ export type QuizAttemptResult = {
         question_id: string;
         text: string;
         multiple: boolean;
+        /** Phase 2: a typed (short) answer — `chosen` holds what was typed, `options` the accepted answers once revealed */
+        short?: boolean;
         points: number;
         correct: boolean;
         chosen: string[];
@@ -80,7 +82,7 @@ export const quizPlayApi = {
   courseQuizzes: (courseId: string) => apiClient.get<{ data: CourseQuiz[] }>(`/api/v1/courses/${courseId}/quizzes`, { params: { view: "take" } }),
   get: (quizId: string) => apiClient.get<QuizInfo>(`/api/v1/quizzes/${quizId}`, { params: { view: "take" } }),
   start: (quizId: string) => apiClient.post<QuizToTake>(`/api/v1/quizzes/${quizId}/attempts`),
-  submit: (attemptId: string, answers: { question_id: string; keys: string[] }[]) =>
+  submit: (attemptId: string, answers: { question_id: string; keys: string[]; answer?: string }[]) =>
     apiClient.post<QuizAttemptResult>(`/api/v1/attempts/${attemptId}/submit`, { answers }),
   result: (attemptId: string) => apiClient.get<QuizAttemptResult>(`/api/v1/attempts/${attemptId}`),
 };

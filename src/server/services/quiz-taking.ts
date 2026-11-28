@@ -75,6 +75,21 @@ function isMulti(type: string) {
   return type === "multiple_choice";
 }
 
+/** Phase 2: a typed answer, compared with the accepted answers. */
+function isShort(type: string) {
+  return type === "short_answer";
+}
+/** "  Muqdisho. " = "muqdisho": case, accents, spaces and end punctuation do not count */
+function normAnswer(s: string) {
+  return s
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/^[\s.,;:!?'"()\-]+|[\s.,;:!?'"()\-]+$/g, "")
+    .trim();
+}
+
 /** Course access for a quiz (student with access, the course instructor or an admin). */
 async function access(user: AuthUser, course: { id: string; instructorId: string }) {
   if (user.role === "admin" || course.instructorId === user.user_id) return { staff: true };
@@ -269,7 +284,9 @@ export async function startAttempt(user: AuthUser, quizId: string, meta?: { ip?:
     text: plain(q.text),
     points: Number(q.points),
     multiple: isMulti(q.type),
-    options: normalizeOptions(q).map(({ key, text }) => ({ key, text })), // no "correct" here
+    short: isShort(q.type),
+    // no "correct" here — and no accepted answers for a short-answer question
+    options: isShort(q.type) ? [] : normalizeOptions(q).map(({ key, text }) => ({ key, text })),
   }));
   return {
     attempt_id: attemptId,
@@ -288,6 +305,22 @@ function feedbackFor(
   return quiz.questions.map((q) => {
     const opts = normalizeOptions(q);
     const chosen = answers.get(q.id) ?? [];
+    if (isShort(q.type)) {
+      const typed = chosen[0] ?? "";
+      const right = !!normAnswer(typed) && opts.some((o) => normAnswer(o.text) === normAnswer(typed));
+      return {
+        question_id: q.id,
+        text: plain(q.text),
+        multiple: false,
+        short: true,
+        points: Number(q.points),
+        correct: right,
+        chosen: typed ? [typed] : [],
+        // the accepted answers are shown only when the answers are revealed
+        options: reveal ? opts.map((o) => ({ key: o.key, text: o.text, chosen: false, correct: true })) : [],
+        explanation: plain(q.explanation) || null,
+      };
+    }
     const correctKeys = opts.filter((o) => o.correct).map((o) => o.key);
     const right =
       correctKeys.length > 0 && chosen.length === correctKeys.length && chosen.every((k) => correctKeys.includes(k));
@@ -328,6 +361,11 @@ export async function submitAttempt(
   for (const item of Array.isArray(input) ? input.slice(0, 500) : []) {
     const q = quiz.questions.find((x) => x.id === item?.question_id);
     if (!q) continue;
+    if (isShort(q.type)) {
+      const typed = String(item.answer ?? (Array.isArray(item.keys) ? item.keys[0] ?? "" : "")).trim().slice(0, 500);
+      chosen.set(q.id, typed ? [typed] : []);
+      continue;
+    }
     const valid = new Set(normalizeOptions(q).map((o) => o.key));
     let keys = (Array.isArray(item.keys) ? item.keys : item.answer !== undefined ? [item.answer] : []).map(String);
     keys = [...new Set(keys.filter((k) => valid.has(k)))];
