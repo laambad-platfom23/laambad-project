@@ -40,6 +40,7 @@ import * as learningPaths from "@/server/services/learning-paths";
 import * as books from "@/server/services/books";
 import * as orders from "@/server/services/orders";
 import * as bookReading from "@/server/services/book-reading";
+import * as certificateRules from "@/server/services/certificate-rules";
 import * as coupons from "@/server/services/coupons";
 import * as whatsapp from "@/server/services/whatsapp";
 import * as passkeys from "@/server/services/passkeys";
@@ -778,6 +779,15 @@ export async function dispatch(req: NextRequest, pathParts: string[]) {
       const takeView = url.searchParams.get("view") === "take";
       if (!takeView && (await quizTaking.canManageCourse(user, courseId))) return json(await quizzes.listByCourse(courseId));
       return json({ data: await quizTaking.courseQuizzes(user, courseId) });
+    }
+    // Phase 2: what is left before the certificate (lessons, quizzes, assignments)
+    if (v1.match(/^courses\/[^/]+\/certificate\/requirements$/) && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await certificateRules.forCourse(user, v1.split("/")[1]));
+    }
+    if (v1 === "my/certificate-progress" && method === "GET") {
+      const user = await requireAuth(req);
+      return json(await certificateRules.inProgress(user));
     }
     if (v1.match(/^courses\/[^/]+\/certificate$/) && method === "POST") {
       const user = await requireAuth(req);

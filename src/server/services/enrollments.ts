@@ -260,8 +260,13 @@ export async function updateLessonProgress(
     try {
       const cert = await completeCourseAndIssue(user.user_id, lesson.section.courseId);
       return { course_completed: true, certificate_id: cert?.id ?? null, completed, completed_percent: pct };
-    } catch {
-      // not all lessons done yet (or no access to a certificate): nothing to do
+    } catch (e) {
+      // Phase 2: all lessons done but a quiz / assignment is still missing → tell the student what is left
+      const err = e as { code?: string; message?: string; details?: { lessons?: { done: number; total: number } } };
+      const allLessons = err.details?.lessons && err.details.lessons.done >= err.details.lessons.total;
+      if (err.code === "certificate_requirements" && allLessons) {
+        return { course_completed: false, certificate_id: null, certificate_note: err.message, completed, completed_percent: pct };
+      }
     }
   }
   return { course_completed: false, certificate_id: null, completed, completed_percent: pct };

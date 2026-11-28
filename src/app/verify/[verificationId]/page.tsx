@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import type { Certificate } from "@/types";
 import { CertificateWithToolbar } from "@/components/certificates/certificate-page";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { getInitials } from "@/lib/utils";
 
 export default function VerifyCertificatePage() {
   const params = useParams();
@@ -50,16 +52,56 @@ export default function VerifyCertificatePage() {
   }
 
   if (valid && cert) {
+    const name = cert.student_name ?? cert.user?.name ?? "";
+    const day = (iso?: string) =>
+      iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : "—";
     return (
       <div className="min-h-screen bg-slate-50 px-4 py-8 dark:bg-[#0B1F3A] sm:py-12">
-        <div className="mx-auto max-w-5xl space-y-5">
-          <div className="flex flex-col items-center gap-2 text-center">
-            <span className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white shadow">
+        <div className="mx-auto max-w-5xl space-y-6">
+          {/* Phase 2: what a QR scan must show first — who, which programme, when, with their photo */}
+          <div className="mx-auto max-w-xl overflow-hidden rounded-3xl border bg-white shadow-xl dark:border-white/10 dark:bg-[#132948]">
+            <div className="flex items-center justify-center gap-2 bg-emerald-600 py-2.5 text-sm font-semibold text-white">
               <ShieldCheck className="h-4 w-4" /> Verified certificate
-            </span>
-            <p className="text-sm text-muted-foreground">
-              Issued by Laambad E-Learning Platform to <b className="text-foreground">{cert.student_name ?? cert.user?.name}</b>.
-            </p>
+            </div>
+            <div className="flex flex-col items-center gap-3 p-6 text-center sm:p-8">
+              <Avatar className="h-28 w-28 ring-4 ring-emerald-500/30">
+                {cert.student_photo ? <AvatarImage src={cert.student_photo} alt="" className="object-cover" /> : null}
+                <AvatarFallback className="bg-[#0B1F3A] text-3xl font-bold text-white">{getInitials(name || "?")}</AvatarFallback>
+              </Avatar>
+              <div>
+                <p className="text-2xl font-extrabold text-[#0B1F3A] dark:text-white">{name}</p>
+                <p className="mt-1 text-sm text-muted-foreground">has successfully completed</p>
+                <p className="mt-1 text-lg font-bold leading-snug text-[#0B1F3A] dark:text-white">{cert.course_title ?? cert.course?.title}</p>
+              </div>
+              <dl className="mt-2 grid w-full grid-cols-1 gap-3 text-left text-sm sm:grid-cols-2">
+                <div className="flex items-center gap-3 rounded-xl bg-muted/50 p-3">
+                  <CalendarDays className="h-5 w-5 shrink-0 text-muted-foreground" />
+                  <div>
+                    <dt className="text-xs text-muted-foreground">Completed on</dt>
+                    <dd className="font-semibold">{day(cert.completed_at ?? cert.issued_at)}</dd>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 rounded-xl bg-muted/50 p-3">
+                  <Award className="h-5 w-5 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0">
+                    <dt className="text-xs text-muted-foreground">Certificate ID</dt>
+                    <dd className="truncate font-mono text-xs font-semibold">{cert.verification_id}</dd>
+                  </div>
+                </div>
+                {cert.duration ? (
+                  <div className="flex items-center gap-3 rounded-xl bg-muted/50 p-3 sm:col-span-2">
+                    <BookOpen className="h-5 w-5 shrink-0 text-muted-foreground" />
+                    <div>
+                      <dt className="text-xs text-muted-foreground">Programme length</dt>
+                      <dd className="font-semibold">{cert.duration}</dd>
+                    </div>
+                  </div>
+                ) : null}
+              </dl>
+              <p className="text-xs text-muted-foreground">
+                Issued by Laambad E-Learning Platform on {day(cert.issued_at)}.
+              </p>
+            </div>
           </div>
           <CertificateWithToolbar cert={cert} />
         </div>

@@ -383,7 +383,17 @@ export async function submitAttempt(
       link: `/learn/${encodeURIComponent(quiz.course.slug)}`,
     });
   }
-  return attemptResult(user, a.id);
+  // Phase 2: passing the last quiz can complete the course and give the certificate
+  let certificate_id: string | null = null;
+  if (passed) {
+    try {
+      const { completeCourseAndIssue } = await import("./misc");
+      certificate_id = (await completeCourseAndIssue(user.user_id, quiz.courseId))?.id ?? null;
+    } catch {
+      /* other requirements are not met yet */
+    }
+  }
+  return { ...(await attemptResult(user, a.id)), certificate_id };
 }
 
 /** Result + feedback of a finished attempt (the student's own, or any for staff). */

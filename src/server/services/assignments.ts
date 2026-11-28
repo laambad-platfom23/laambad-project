@@ -649,5 +649,15 @@ export async function gradeSubmission(user: AuthUser, submissionId: string, inpu
       cta: "See your result",
     },
   });
-  return { ok: true, grade, feedback, graded_at: t.toISOString() };
+  // Phase 2: a passing grade can be the last requirement of the student's certificate
+  let certificate_issued = false;
+  if (grade >= (pass ?? 0)) {
+    try {
+      const { completeCourseAndIssue } = await import("./misc");
+      certificate_issued = !!(await completeCourseAndIssue(s.studentId, s.assignment.courseId));
+    } catch {
+      /* other requirements are not met yet */
+    }
+  }
+  return { ok: true, grade, feedback, graded_at: t.toISOString(), certificate_issued };
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { CertificateChecklist } from "@/components/learning/certificate-checklist";
 import { useMemo } from "react";
 import { Award, BrainCircuit, CheckCircle2, ChevronRight, CircleDashed, ClipboardList, Clock, FileText, FolderOpen, HelpCircle, Lock, Paperclip } from "lucide-react";
 import { CourseDescriptionBlocks } from "@/components/courses/course-description-blocks";
@@ -331,20 +332,29 @@ export function GradebookPanel({
   items,
   onOpenQuiz,
   onOpenAssignment,
+  courseId,
 }: {
   items: LearningItems | undefined;
   onOpenQuiz: (id: string) => void;
   onOpenAssignment: (id: string) => void;
+  /** Phase 2: shows "Your certificate" (what is left) on top */
+  courseId?: string;
 }) {
   const quizzes = items?.quizzes ?? [];
   const assignments = items?.assignments ?? [];
   if (!quizzes.length && !assignments.length) {
-    return <Empty icon={Award} title="Nothing graded in this course" text="Quiz scores and assignment grades show here." />;
+    return (
+      <div className="space-y-4">
+        {courseId ? <CertificateChecklist courseId={courseId} /> : null}
+        <Empty icon={Award} title="Nothing graded in this course" text="Quiz scores and assignment grades show here." />
+      </div>
+    );
   }
   const qPassed = quizzes.filter((q) => q.passed).length;
   const aGraded = assignments.filter((a) => a.status === "graded").length;
   return (
     <div className="space-y-4">
+      {courseId ? <CertificateChecklist courseId={courseId} /> : null}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Quizzes passed" value={`${qPassed} / ${quizzes.length}`} />
         <Stat label="Quizzes taken" value={`${quizzes.filter((q) => q.attempts_used > 0).length} / ${quizzes.length}`} />

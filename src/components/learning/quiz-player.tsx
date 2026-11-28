@@ -249,6 +249,13 @@ function QuizTaking({
         /* ignore */
       }
       if (auto) toast.message("Time is up — your answers were submitted.");
+      const certId = (data as { certificate_id?: string | null }).certificate_id;
+      if (certId) {
+        toast.success("🎓 Course completed — your certificate is ready!", {
+          duration: 12000,
+          action: { label: "View certificate", onClick: () => window.location.assign(`/dashboard/certificates/${certId}`) },
+        });
+      }
       onSubmitted(data);
     } catch (e) {
       toast.error(getApiErrorMessage(e, "Could not submit the quiz"));

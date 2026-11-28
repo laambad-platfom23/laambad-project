@@ -407,11 +407,13 @@ export interface Certificate {
   completed_at?: string;
   pdf_url?: string | null;
   student_name?: string;
+  /** Phase 2: the student's profile photo (shown on the public verification page) */
+  student_photo?: string | null;
   course_title?: string;
   /** e.g. "4 hours 30 minutes" (from the WordPress course duration) */
   duration?: string | null;
   user?: { id: string; name: string; email?: string };
-  course?: { id: string; title: string; slug: string };
+  course?: { id: string; title: string; slug: string; cover_image_url?: string | null };
 }
 
 export interface CertificateVerifyResponse {

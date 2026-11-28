@@ -250,7 +250,7 @@ function LearnCoursePageInner() {
       const lessonId = selected?.lesson.id;
       if (!lessonId) return null;
       const res = await enrollmentsApi.updateLessonProgress(lessonId, { completed: true, completed_percent: 100 });
-      return (res?.data ?? null) as { course_completed?: boolean; certificate_id?: string | null } | null;
+      return (res?.data ?? null) as { course_completed?: boolean; certificate_id?: string | null; certificate_note?: string } | null;
     },
     onSuccess: (result) => {
       if (result?.certificate_id) {
@@ -260,7 +260,15 @@ function LearnCoursePageInner() {
           action: { label: "View certificate", onClick: () => router.push(`/dashboard/certificates/${certId}`) },
         });
         queryClient.invalidateQueries({ queryKey: ["my-certificates"] });
+      } else if (result?.certificate_note) {
+        // Phase 2: every lesson is done, but the certificate also needs the quizzes / assignments
+        toast.message("All lessons done — one more step for your certificate", {
+          description: result.certificate_note.charAt(0).toUpperCase() + result.certificate_note.slice(1) + ".",
+          duration: 12000,
+          action: { label: "See what is left", onClick: () => showTab("grades") },
+        });
       }
+      queryClient.invalidateQueries({ queryKey: ["certificate-requirements", course?.id] });
       queryClient.invalidateQueries({ queryKey: ["course-progress", course?.id] });
       queryClient.invalidateQueries({ queryKey: ["learn-course", slug] });
       queryClient.invalidateQueries({ queryKey: ["learning-items", course?.id] });
@@ -717,7 +725,7 @@ function LearnCoursePageInner() {
                   {tab === "assignments" ? <AssignmentsPanel items={items} onOpen={openAssignment} /> : null}
                   {tab === "resources" ? <ResourcesPanel items={items} activeLessonId={activeLessonId} onSelectLesson={selectLesson} /> : null}
                   {tab === "qa" && selected ? <LessonQAPanel lessonId={selected.lesson.id} isInstructor={canAnswerLessonQA} /> : null}
-                  {tab === "grades" ? <GradebookPanel items={items} onOpenQuiz={openQuiz} onOpenAssignment={openAssignment} /> : null}
+                  {tab === "grades" ? <GradebookPanel items={items} onOpenQuiz={openQuiz} onOpenAssignment={openAssignment} courseId={course.id} /> : null}
                 </div>
               </div>
             </>

@@ -10,10 +10,13 @@ import { withLegacyPrice } from "@/server/legacy-prices";
 import { fromMinor, toMinor, toMinorOrNull } from "@/server/money";
 import { findBestEnrollment, hasCourseAccess } from "@/server/enrollment-status";
 import * as coupons from "@/server/services/coupons";
+import * as certificateRules from "@/server/services/certificate-rules";
 import { decodeHtmlEntities } from "@/lib/html-entities";
 import { ser, toSlug } from "@/server/serialize";
 import type { AuthUser } from "@/lib/auth/request";
 import { savePublicUpload } from "@/lib/local-storage";
+import { userPhotoUrl } from "@/server/legacy-uploads";
+import { courseCoverUrl } from "@/server/services/courses";
 import { courseDurationMinutes, courseIssuesCertificate, formatDuration } from "@/server/legacy-course-certificates";
 
 // ── Users ──
@@ -197,11 +200,13 @@ type CertRow = {
   pdfUrl: string | null;
   createdAt: Date | null;
   updatedAt: Date | null;
-  user: { id: string; name: string; email?: string };
+  user: { id: string; name: string; email?: string; avatarUrl?: string | null };
   course: {
     id: string;
     title: string;
     slug: string;
+    coverUrl?: string | null;
+    legacyThumbnailId?: bigint | null;
     certificateTemplate?: { design: unknown; deletedAt: Date | null } | null;
   };
 };
@@ -222,6 +227,7 @@ async function certificateView(c: CertRow, opts: { includeEmail?: boolean } = {}
     completed_at: (enrollment?.completedAt ?? c.issuedAt).toISOString(),
     pdf_url: c.pdfUrl,
     student_name: c.user.name,
+    student_photo: userPhotoUrl(c.user.id, c.user.avatarUrl),
     course_title: decodeHtmlEntities(c.course.title),
     duration: formatDuration(courseDurationMinutes(c.courseId)),
     user: { id: c.user.id, name: c.user.name, ...(opts.includeEmail ? { email: c.user.email } : {}) },
@@ -234,8 +240,10 @@ async function certificateView(c: CertRow, opts: { includeEmail?: boolean } = {}
 }
 
 const CERT_INCLUDE = {
-  user: { select: { id: true, name: true, email: true } },
-  course: { select: { id: true, title: true, slug: true, certificateTemplate: { select: { design: true, deletedAt: true } } } },
+  user: { select: { id: true, name: true, email: true, avatarUrl: true } },
+  course: {
+    select: { id: true, title: true, slug: true, coverUrl: true, legacyThumbnailId: true, certificateTemplate: { select: { design: true, deletedAt: true } } },
+  },
 } as const;
 
 export async function listCertificates(userId: string) {
@@ -254,7 +262,7 @@ export async function listCertificates(userId: string) {
       pdf_url: c.pdfUrl,
       student_name: c.user.name,
       course_title: decodeHtmlEntities(c.course.title),
-      course: { id: c.course.id, title: decodeHtmlEntities(c.course.title), slug: c.course.slug },
+      course: { id: c.course.id, title: decodeHtmlEntities(c.course.title), slug: c.course.slug, cover_image_url: courseCoverUrl(c.course) },
     }))
   );
 }
@@ -293,19 +301,9 @@ export async function completeCourseAndIssue(userId: string, courseId: string) {
   });
   if (existing) return getCertificate(userId, existing.id);
 
-  const lessonIds = (
-    await prisma.lesson.findMany({
-      where: { deletedAt: null, section: { courseId, deletedAt: null } },
-      select: { id: true },
-    })
-  ).map((l) => l.id);
-  // progress belongs to the user + lesson (migrated rows may point at another enrollment of the same course)
-  const done = await prisma.lessonProgress.count({
-    where: { userId, lessonId: { in: lessonIds }, completed: true, deletedAt: null },
-  });
-  if (lessonIds.length === 0 || done < lessonIds.length) {
-    throw Err.invalidInput("complete all lessons first");
-  }
+  // Phase 2: every lesson completed, every quiz passed, every assignment passed (graded) — see certificate-rules
+  const req = await certificateRules.requirements(userId, courseId);
+  if (!req.ready) throw new ApiError(400, "certificate_requirements", certificateRules.missingMessage(req), req);
 
   const t = now();
   if (!enrollment.completedAt) {
